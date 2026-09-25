@@ -1,0 +1,16 @@
+spring:
+  application:
+    name: incident-management
+  datasource:
+    url: ${DB_URL:jdbc:postgresql://localhost:5432/incidents}
+    username: ${DB_USER:incidents}
+    password: ${DB_PASSWORD:incidents}
+  jpa:
+    open-in-view: false
+    hibernate:
+      # Schema is owned by Flyway (ADR-0002); Hibernate only checks that entities match it.
+      ddl-auto: validate
+  flyway:
+    # One folder per module (ADR-0002). Version numbers must be unique across all folders.
+    locations: classpath:db/migration/organization
+    schemas: organization
