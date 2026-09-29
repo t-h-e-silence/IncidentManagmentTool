@@ -1,6 +1,6 @@
 # Architecture Decision Records
 
-**Updated:** 2026-09-25
+**Updated:** 2026-09-29
 
 ## About these records
 - **Template:** Nygard (Title, Status, Context, Decision, Consequences), extended with *Alternatives considered* and *Confirmation* (the automated check / fitness function that shows the decision is still followed).
@@ -49,13 +49,14 @@
 | 0006 | [Route incidents to teams by category](incidents/0006-route-incidents-to-teams-by-category.md) | Proposed | Assignment rules |
 | 0011 | [Assign incidents to teams and escalate by reassignment or priority](incidents/0011-assign-incidents-to-teams-and-escalate-by-reassignment-or-priority.md) | Proposed | Assignment rules; escalation |
 
-### Messaging — Event delivery, retries and dead letters
+### Messaging — Event delivery, notification delivery, retries and dead letters
 
 | # | Title | Status | Requirement |
 |---|---|---|---|
 | 0008 | [Publish domain events through a transactional outbox](messaging/0008-publish-domain-events-through-a-transactional-outbox.md) | Proposed | Notification delivery; Q: same transaction |
-| 0009 | [Retry failed deliveries and dead-letter them](messaging/0009-retry-failed-deliveries-and-dead-letter-them.md) | Proposed | Q: where RabbitMQ fits |
-| 0012 | [Deliver incident events to notifications through RabbitMQ](messaging/0012-deliver-incident-events-to-notifications-through-rabbitmq.md) | Proposed | Q: where RabbitMQ fits |
+| 0009 | [Retry failed deliveries and dead-letter them](messaging/0009-retry-failed-deliveries-and-dead-letter-them.md) | Proposed | Notification delivery |
+| 0012 | [Deliver incident events to notifications through RabbitMQ](messaging/0012-deliver-incident-events-to-notifications-through-rabbitmq.md) | Rejected (see 0016) | Q: where RabbitMQ fits |
+| 0016 | [Send notifications by email over SMTP, without a message broker](messaging/0016-send-notifications-by-email-over-smtp-without-a-message-broker.md) | Proposed | Notification delivery; Q: where RabbitMQ fits |
 
 ### Audit — Audit trail
 

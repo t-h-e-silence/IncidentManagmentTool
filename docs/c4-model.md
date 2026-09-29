@@ -1,6 +1,6 @@
 # Incident Management System — C4 Model
 
-**Updated:** 2026-09-25
+**Updated:** 2026-09-29
 **Notation:** [C4 model](https://c4model.com/) — Level 1 System Context, Level 2 Containers, Level 3 Components, plus one dynamic view.
 **Related:** [domain-model.md](domain-model.md), [system-design.md](system-design.md), [ADRs](adr/README.md).
 
@@ -11,8 +11,8 @@ The diagrams show the **planned** system. Elements marked **(later)** are not pa
 
 | Element | Impl                                          | Later |
 |---|-----------------------------------------------|---|
-| Notification channels | stub channel that logs                        | email, Slack, SMS (open question) |
-| Event transport | outbox relay dispatches in-process (ADR-0008) | outbox relay publishes to RabbitMQ |
+| Notification channels | email over SMTP; stub that logs in `local`/`test` (ADR-0016) | Slack, SMS |
+| Event transport | outbox relay dispatches in-process (ADR-0008) | no broker planned (ADR-0016) |
 | Authentication | `X-User-Id` header (ADR-0004)                 | external identity provider (OIDC/JWT) |
 | AI investigation assistant | —                                             | separate service with read-only access |
 
@@ -32,7 +32,7 @@ C4Context
 
     System(ims, "Incident Management System", "Routes incidents to teams, escalates by reassignment or priority, notifies responders and keeps an immutable audit trail.")
 
-    System_Ext(channels, "Notification channels", "Email / Slack / SMS (later). Stub that logs.")
+    System_Ext(channels, "Email server", "SMTP relay (corporate relay or a provider such as SES). Slack / SMS later.")
     System_Ext(idp, "Identity provider (later)", "OIDC/JWT login, e.g. Keycloak.")
     System_Ext(monitoring, "Monitoring", "Prometheus + Grafana: metrics such as dead-lettered notifications.")
     System_Ext(ai, "AI investigation assistant (later)", "Reads incidents, timelines and runbooks through read-only APIs / MCP.")
@@ -40,11 +40,11 @@ C4Context
     Rel(reporter, ims, "Reports incidents, views own incidents", "HTTPS/JSON")
     Rel(responder, ims, "Works on, escalates and resolves incidents", "HTTPS/JSON")
     Rel(admin, ims, "Configures teams, categories, policies", "HTTPS/JSON")
-    Rel(ims, channels, "Sends notifications", "SMTP / HTTPS")
+    Rel(ims, channels, "Sends notification emails", "SMTP")
     Rel(ims, idp, "Validates tokens", "OIDC")
     Rel(monitoring, ims, "Scrapes metrics", "HTTP /actuator/prometheus")
     Rel(ai, ims, "Reads incidents and timelines", "HTTPS / MCP")
-    Rel(channels, responder, "Delivers messages to")
+    Rel(channels, responder, "Delivers emails to")
 
     UpdateRelStyle(reporter, ims, $textColor="#8A8F98", $lineColor="#8A8F98")
     UpdateRelStyle(responder, ims, $textColor="#8A8F98", $lineColor="#8A8F98")
@@ -60,7 +60,7 @@ C4Context
 ---
 
 ## Level 2 — Containers
-One deployable application (modular monolith, ADR-0001) and one database with one schema per module (ADR-0002, ADR-0003).
+One deployable application (modular monolith, ADR-0001) and one database with one schema per module (ADR-0002, ADR-0003). There is no message broker: events go through the outbox in-process, and emails leave through SMTP (ADR-0016).
 
 ```mermaid
 %%{init: {"themeVariables": {"textColor": "#8A8F98"}}}%%
@@ -70,27 +70,24 @@ C4Container
     Person(user, "User", "Reporter, responder or admin")
 
     System_Boundary(ims, "Incident Management System") {
-        Container(app, "Incident Management API", "Java 21, Spring Boot 3, Spring Modulith", "Modular monolith: organization, incidents, escalations, notifications, audit. REST API, outbox relay, delivery workers.")
+        Container(app, "Incident Management API", "Java 21, Spring Boot 3, Spring Modulith", "Modular monolith: organization, incidents, escalations, notifications, audit. REST API, outbox relay, email delivery worker.")
         ContainerDb(db, "Database", "PostgreSQL", "One schema per module: organization, incidents, escalations, notifications, audit. Outbox and processed_events tables.")
-        ContainerQueue(mq, "Message broker (later)", "RabbitMQ", "Topic exchange per publisher, durable queue per consumer, retry queues and DLQ.")
     }
 
-    System_Ext(channels, "Notification channels", "Email / Slack / SMS")
+    System_Ext(channels, "Email server", "SMTP relay")
     System_Ext(idp, "Identity provider (later)", "OIDC")
     System_Ext(monitoring, "Monitoring", "Prometheus + Grafana")
     System_Ext(ai, "AI investigation assistant (later)", "MCP client")
 
     Rel(user, app, "Uses", "HTTPS/JSON")
     Rel(app, db, "Reads/writes own schemas; incident + outbox in one transaction", "JDBC")
-    Rel(app, mq, "Outbox relay publishes; notifications consumes (later, ADR-0012)", "AMQP")
-    Rel(app, channels, "Delivers notifications", "SMTP / HTTPS")
+    Rel(app, channels, "Sends notification emails (ADR-0016)", "SMTP")
     Rel(app, idp, "Validates tokens (later)", "OIDC")
     Rel(monitoring, app, "Scrapes metrics", "HTTP")
     Rel(ai, app, "Reads incidents and audit timeline", "HTTPS / MCP")
 
     UpdateRelStyle(user, app, $textColor="#8A8F98", $lineColor="#8A8F98")
     UpdateRelStyle(app, db, $textColor="#8A8F98", $lineColor="#8A8F98")
-    UpdateRelStyle(app, mq, $textColor="#8A8F98", $lineColor="#8A8F98")
     UpdateRelStyle(app, channels, $textColor="#8A8F98", $lineColor="#8A8F98")
     UpdateRelStyle(app, idp, $textColor="#8A8F98", $lineColor="#8A8F98")
     UpdateRelStyle(monitoring, app, $textColor="#8A8F98", $lineColor="#8A8F98")
@@ -115,14 +112,14 @@ C4Component
         Component(org, "organization", "Spring module", "Users, teams, memberships with per-team role, category → team routing. OrganizationApi.")
         Component(inc, "incidents", "Spring module", "Incident lifecycle, severity, priority, owning team, comments, escalate(). Only writer of team_id and priority (ADR-0011). IncidentApi.")
         Component(esc, "escalations", "Spring module", "Escalation policies, automatic escalation decisions (once per incident + policy). EscalationApi.")
-        Component(notif, "notifications", "Spring module", "One notification per recipient, retry with backoff, dead letter, replay. NotificationApi.")
+        Component(notif, "notifications", "Spring module", "One notification per recipient; delivery worker sends due ones, retry with backoff, dead letter, replay. NotificationApi.")
         Component(audit, "audit", "Spring module", "Append-only audit entries, incident timeline. AuditApi (read-only).")
         Component(relay, "Outbox relay", "Scheduled poller", "Reads PENDING outbox rows (FOR UPDATE SKIP LOCKED) and dispatches events; retries and dead-letters (ADR-0009).")
-        Component(channel, "Channel adapter", "NotificationChannel", "Stub that logs; email / Slack / SMS later.")
+        Component(channel, "Channel adapter", "NotificationChannel", "EmailChannel (JavaMailSender); LogChannel stub in local/test.")
     }
 
     ContainerDb(db, "Database", "PostgreSQL", "Schemas: organization, incidents, escalations, notifications, audit")
-    System_Ext(channels, "Notification channels", "Email / Slack / SMS")
+    System_Ext(channels, "Email server", "SMTP relay")
 
     Rel(user, inc, "Report, change status/severity/priority, escalate, comment, resolve", "REST")
     Rel(user, org, "Configure teams and categories (admin)", "REST")
@@ -139,7 +136,7 @@ C4Component
     Rel(relay, audit, "All incident, escalation and config events", "event")
 
     Rel(notif, channel, "Deliver")
-    Rel(channel, channels, "Send", "SMTP / HTTPS")
+    Rel(channel, channels, "Send email", "SMTP")
     Rel(inc, db, "incidents schema", "JDBC")
     Rel(org, db, "organization schema", "JDBC")
 

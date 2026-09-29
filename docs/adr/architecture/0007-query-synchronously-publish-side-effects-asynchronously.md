@@ -43,7 +43,7 @@ We need one consistent rule for all three.
 - **Easier:**
   - requests are fast and never fail because of side effects;
   - publishers don't know their consumers, so new consumers (e.g. the future AI assistant) need no publisher change;
-  - it maps directly to RabbitMQ later ([ADR-0012](../messaging/0012-deliver-incident-events-to-notifications-through-rabbitmq.md));
+  - a message broker could replace the in-process transport later without changing publishers or consumers (none is planned, [ADR-0016](../messaging/0016-send-notifications-by-email-over-smtp-without-a-message-broker.md));
   - only the owner ever writes its data, even for changes triggered by another module.
 - **Harder:**
   - eventual consistency: notifications and audit entries appear shortly after the commit;

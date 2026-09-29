@@ -1,7 +1,7 @@
 # ADR-0009: Retry failed deliveries and dead-letter them
 
 ## Status
-Proposed — 2026-09-25. Refined by [ADR-0012](0012-deliver-incident-events-to-notifications-through-rabbitmq.md): which retries run in RabbitMQ and which stay in the database.
+Proposed — 2026-09-25. Refined by [ADR-0016](0016-send-notifications-by-email-over-smtp-without-a-message-broker.md): how SMTP errors are classified. All retries run in the database; there is no message broker.
 
 ## Context
 With the outbox ([ADR-0008](0008-publish-domain-events-through-a-transactional-outbox.md)), events are never lost. Two kinds of delivery can still fail repeatedly:
@@ -16,10 +16,10 @@ Retrying forever hides problems and wastes resources. Dropping deliveries after 
   - Each `Notification`, i.e. one recipient.
   - A failure never retries the other subscribers or the other recipients.
 - **Transient vs permanent failures.**
-  - Transient failures are retried: timeouts, connection errors, HTTP 5xx or 429, and database unavailable. A 429 respects `Retry-After`.
-  - Permanent failures are dead-lettered **immediately**, without retries. Examples: invalid or unknown address, HTTP 4xx other than 429, a payload that cannot be deserialized.
+  - Transient failures are retried: timeouts, connection errors, HTTP 5xx or 429, SMTP `4xx`, and database unavailable. A 429 respects `Retry-After`.
+  - Permanent failures are dead-lettered **immediately**, without retries. Examples: invalid or unknown address (SMTP `5xx` to `RCPT TO`), HTTP 4xx other than 429, a payload that cannot be deserialized.
   - The channel adapter classifies the error with a `permanent` flag on the existing `DeliveryFailedException`.
-- **Backoff:** 5 attempts at about 10 s, 30 s, 1 min, 5 min and 15 min, each with ±20 % jitter. The status is `RETRYING` in between. The last attempt happens about 21 minutes after the first.
+- **Backoff:** 6 attempts: the first one, then 5 retries after about 10 s, 30 s, 1 min, 5 min and 15 min, each delay with ±20 % jitter. The status is `RETRYING` in between. The last attempt happens about 21 minutes after the first.
 - **Dead letter.** After the last attempt, or at once for a permanent failure, the status becomes `DEAD_LETTERED`. The record is kept, and:
   - an ERROR log is written with `eventId` or `notificationId`, `subscriber`, `correlationId` and the last error;
   - `outbox_dead_lettered_total{subscriber}` or `notifications_dead_lettered_total{severity, channel}` is incremented;
@@ -28,7 +28,7 @@ Retrying forever hides problems and wastes resources. Dropping deliveries after 
   - any dead-lettered notification of a **SEV1 or SEV2** incident pages the platform on-call at once, because a responder may not know about a critical incident;
   - other dead letters raise a ticket-level alert and are reviewed daily;
   - any `audit` dead letter raises a ticket-level alert, because it leaves a gap in the audit trail ([ADR-0010](../audit/0010-make-the-audit-log-append-only.md)).
-- **With RabbitMQ**, event-processing retries for the consumers that move there use retry queues and a dead-letter queue with the same backoff steps ([ADR-0012](0012-deliver-incident-events-to-notifications-through-rabbitmq.md)). Notification delivery retries stay in the database.
+- **Where retries live.** Both kinds are rows in PostgreSQL: `outbox_delivery` for events, `notification` for emails. There is no broker-level retry ([ADR-0016](0016-send-notifications-by-email-over-smtp-without-a-message-broker.md)). For email, SMTP `4xx` replies and connection errors are transient, and a `5xx` reply to a recipient is permanent.
 
 ## Consequences
 - **Easier:**
@@ -49,6 +49,6 @@ Retrying forever hides problems and wastes resources. Dropping deliveries after 
 
 ## Confirmation
 Integration tests with the stub channel:
-- set to fail transiently: after 5 attempts the notification is `DEAD_LETTERED` and `notifications_dead_lettered_total` increases by 1; a replay delivers it once the stub recovers;
+- set to fail transiently: after 6 attempts the notification is `DEAD_LETTERED` and `notifications_dead_lettered_total` increases by 1; a replay delivers it once the stub recovers;
 - set to fail permanently: the notification is `DEAD_LETTERED` after one attempt;
 - with the `audit` subscriber failing: only its delivery row dead-letters, with `subscriber="audit"` on the metric.

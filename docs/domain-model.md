@@ -45,7 +45,8 @@ sequenceDiagram
     O-)A: IncidentCreated
     O-)E: IncidentCreated
     N->>T: membersOf(teamId) (incl. contacts)
-    N->>N: create Notification per responder, deliver via stub
+    N->>N: create Notification per responder
+    N->>N: delivery worker sends each as email (SMTP)
 ```
 
 ## 4. Modules (bounded contexts)
@@ -54,7 +55,7 @@ sequenceDiagram
 | `organization` | Users (global role, contacts), teams, membership with per-team role, category → team routing | `User` (id, name, email, `SystemRole` = USER / ADMIN), `Team`, `Membership(teamId, userId, TeamRole)` with `TeamRole` = RESPONDER / TEAM_LEAD, `Category(id, name, teamId)` |
 | `incidents` | Incident lifecycle, severity, priority, owning team, escalation, comments | `Incident` (aggregate root), `IncidentId`, `IncidentStatus`, `Severity`, `Priority` (proposed), `Comment` |
 | `escalations` | Escalation policies and automatic escalation decisions | `EscalationPolicy(teamId, severityThreshold, targetTeamId)`, `EscalationDecision` |
-| `notifications` | Notification intent and delivery attempts (delivery stubbed) | `Notification(recipientId, channel, status, attempts)`, `NotificationStatus` |
+| `notifications` | Notification intent and email delivery over SMTP, with retries | `Notification(recipientId, channel, status, attempts)`, `NotificationStatus` |
 | `audit` | Immutable record of significant actions | `AuditEntry(eventId, actorId, action, entityType, entityId, occurredAt, payload, correlationId, correctsEntryId)` |
 
 ### Incident aggregate
@@ -133,7 +134,7 @@ The incident holds its **current** `teamId`, `categoryId` (plus a category-name 
 All fields of an `AuditEntry`: `eventId`, `actorId`, `action`, `entityType`, `entityId`, `occurredAt`, `payload`, `correlationId`, `correctsEntryId`. The table is append-only (the app role has no UPDATE/DELETE privileges, no update methods in code); corrections are new entries ([ADR-0010](adr/audit/0010-make-the-audit-log-append-only.md)).
 
 **Where will RabbitMQ eventually fit, and what problem will it solve?**
-Between the outbox relay and the consumer modules, starting with `notifications` only ([ADR-0012](adr/messaging/0012-deliver-incident-events-to-notifications-through-rabbitmq.md)). It decouples consumers so they can be scaled or extracted independently, gives durable per-consumer queues, retries via TTL queues and a dead-letter exchange.
+Not in the current design ([ADR-0016](adr/messaging/0016-send-notifications-by-email-over-smtp-without-a-message-broker.md)). The outbox relay already gives durable, ordered, per-subscriber delivery with retries and dead letters inside the monolith, and the slow part (the SMTP server) is handled by per-notification retries in `notifications`. A broker would fit **between the outbox relay and a consumer that leaves the process**, e.g. if `notifications` is extracted into a service. It would then give independent scaling and per-consumer queues without dual writes, because the outbox stays. The earlier RabbitMQ design is kept as a reference in the rejected [ADR-0012](adr/messaging/0012-deliver-incident-events-to-notifications-through-rabbitmq.md).
 
 **What event would be published later, and who owns its schema?**
 `IncidentCreated` first (it drives notifications); its schema is owned by `incidents` and versioned via `schemaVersion` ([ADR-0014](adr/architecture/0014-evolve-event-schemas-additively-with-a-schema-version.md)).
@@ -147,4 +148,4 @@ An *Incident investigation assistant* will be a separate module/service consumin
 3. Which actions should be restricted to `TEAM_LEAD` later (e.g. resolving SEV1, lowering severity)? In v1 none (ADR-0013).
 4. ~~Who may change severity — only team members, or the reporter too?~~ Answered by ADR-0013: only members of the owning team; the reporter may comment.
 5. Do we need confidential incidents with restricted read access?
-6. Which real notification channels come first (email, Slack, SMS)?
+6. ~~Which real notification channels come first (email, Slack, SMS)?~~ Answered by ADR-0016: email over SMTP.

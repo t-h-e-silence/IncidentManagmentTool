@@ -1,10 +1,10 @@
 # Incident Management System — System Design
 
-**Updated:** 2026-09-25
+**Updated:** 2026-09-29
 **Scope:** responsibilities, data, relationships and data flow of the five modules.
 **Related:** [domain-model.md](domain-model.md) (overview), [adr/](adr/README.md) (decisions), [c4-model.md](c4-model.md) (C4 diagrams).
 
-This document applies the decisions in ADR-0001 … ADR-0015. Where it and an ADR disagree, the ADR wins, and this document should be fixed.
+This document applies the decisions in ADR-0001 … ADR-0016 (ADR-0012 is rejected). Where it and an ADR disagree, the ADR wins, and this document should be fixed.
 
 Fields and methods marked **(proposed)** do not exist in code yet; everything else matches the current code
 (`*.api`, `*.domain`, `organization.user`, `organization.team`, `V1__organization_schema.sql`).
@@ -94,7 +94,7 @@ Solid = synchronous call to the target's `api` package. Dotted = asynchronous ev
 - **Does:**
   - turn events into one `Notification` per recipient (idempotent on `sourceEventId + recipientId`);
   - fall back to the active admins when a team has no active members;
-  - deliver through a channel (stub `LOG` channel for now);
+  - deliver each notification by **email over SMTP** from its own delivery worker ([ADR-0016](adr/messaging/0016-send-notifications-by-email-over-smtp-without-a-message-broker.md)); a `LOG` stub channel in `local`/`test`;
   - retry transient failures with backoff, dead-letter permanent failures at once ([ADR-0009](adr/messaging/0009-retry-failed-deliveries-and-dead-letter-them.md));
   - manual replay.
 - **Does not:** decide who is responsible (asks `organization.membersOf`).
@@ -106,6 +106,16 @@ Solid = synchronous call to the target's `api` package. Dotted = asynchronous ev
 - **Does not:**
   - update or delete entries (a correction is a new entry);
   - participate in business transactions.
+
+### shared
+Not a business module: a small kernel that every module may depend on. It owns no schema and no API.
+- **Contains:**
+  - `DomainEvent` and `EventMetadata`, the envelope every event carries (`eventId` for idempotency, `occurredAt`, `actorId`, `correlationId`, `schemaVersion`) ([ADR-0007](adr/architecture/0007-query-synchronously-publish-side-effects-asynchronously.md), [ADR-0014](adr/architecture/0014-evolve-event-schemas-additively-with-a-schema-version.md));
+  - `DomainException` (→ HTTP 409/422) and `NotFoundException` (→ HTTP 404);
+  - `Checks`, argument checks shared by domain classes.
+- **Does not:**
+  - hold business rules or module-specific types (ids and views live in each module's `api`);
+  - depend on any module.
 
 ---
 
@@ -212,7 +222,7 @@ Common conventions:
 | `outbox` | event_id | PK |
 | | type, schema_version, payload (jsonb), correlation_id, occurred_at | the event and the request that caused it |
 | | aggregate_id, aggregate_version | order per incident |
-| `outbox_delivery` | event_id, subscriber | PK; one row per subscriber (`audit`, `escalations`, `notifications` or `rabbitmq`) |
+| `outbox_delivery` | event_id, subscriber | PK; one row per subscriber (`audit`, `escalations`, `notifications`) |
 | | status | `PENDING`, `RETRYING`, `SENT`, `DEAD_LETTERED` |
 | | attempts, next_attempt_at, last_error | retry state ([ADR-0009](adr/messaging/0009-retry-failed-deliveries-and-dead-letter-them.md)) |
 
@@ -259,7 +269,7 @@ Rows whose deliveries are all `SENT` are purged after 7 days ([ADR-0015](adr/dat
 | id | ✔ | PK |
 | source_event_id, recipient_id | ✔ | **UNIQUE(source_event_id, recipient_id)**: the idempotency key |
 | incident_id | ✔ | |
-| channel | ✔ | `LOG`; `EMAIL` and others later |
+| channel | ✔ | `EMAIL`; `LOG` in `local`/`test` ([ADR-0016](adr/messaging/0016-send-notifications-by-email-over-smtp-without-a-message-broker.md)) |
 | reason | ✔ | `INCIDENT_CREATED`, `INCIDENT_STATUS_CHANGED`, `INCIDENT_ESCALATED` |
 | message | ✔ | |
 | status | ✔ | `PENDING → SENT`, or `PENDING → RETRYING → … → SENT \| DEAD_LETTERED` |
@@ -396,11 +406,12 @@ Delivery rules:
 - **At-least-once.** Each consumer is idempotent by a unique key in its own schema: `processed_events` in escalations, `UNIQUE(source_event_id, recipient_id)` in notifications, `UNIQUE(event_id)` in audit.
 - **Ordered per incident and subscriber** by the relay, and stale versions are ignored by `escalations` ([ADR-0008](adr/messaging/0008-publish-domain-events-through-a-transactional-outbox.md)).
 - **Schemas evolve additively**, and a breaking change bumps `schemaVersion` with a transition period ([ADR-0014](adr/architecture/0014-evolve-event-schemas-additively-with-a-schema-version.md)).
-- **Transport:** in-process today. Events for `notifications` go through RabbitMQ once one of the triggers in [ADR-0012](adr/messaging/0012-deliver-incident-events-to-notifications-through-rabbitmq.md) is met.
+- **Transport:** in-process, through the outbox relay. There is no message broker ([ADR-0016](adr/messaging/0016-send-notifications-by-email-over-smtp-without-a-message-broker.md)).
 
 ### 5.6 Failures
 - **One subscriber fails:** only its delivery row retries (10 s … 15 min), then dead-letters. The other subscribers are unaffected ([ADR-0008](adr/messaging/0008-publish-domain-events-through-a-transactional-outbox.md), [ADR-0009](adr/messaging/0009-retry-failed-deliveries-and-dead-letter-them.md)).
-- **A channel fails for one recipient:** only that `Notification` retries. A permanent error (e.g. a bad address) dead-letters at once.
+- **The SMTP server fails for one recipient:** only that `Notification` retries. Connection errors and `4xx` replies are transient; a `5xx` reply for the recipient (e.g. `550` unknown mailbox) dead-letters at once.
+- **The SMTP server is down:** incident creation is unaffected; notifications stay `RETRYING` and are sent when it is back, or dead-letter after ~21 minutes.
 - **Dead letters:**
   - SEV1/SEV2 notifications page the platform on-call;
   - audit dead letters raise an alert;
@@ -607,7 +618,14 @@ Changes the code needs to match this design and the ADRs. None are implemented y
 **notifications**
 - [ ] Notify the reporter on reassignment and on resolve.
 - [ ] Fall back to active admins when a team has no active members; add `notifications_no_recipients_total`.
+- [ ] Add ±20 % jitter to `RetryPolicy` delays ([ADR-0009](adr/messaging/0009-retry-failed-deliveries-and-dead-letter-them.md)).
 - [ ] Add a `permanent` flag to `DeliveryFailedException`; dead-letter permanent failures at once; add metric labels (`severity`, `channel`).
+- [ ] Email delivery ([ADR-0016](adr/messaging/0016-send-notifications-by-email-over-smtp-without-a-message-broker.md)):
+  - add `spring-boot-starter-mail`, `spring.mail.*` and `notifications.mail.from` config (secrets from env), 10 s timeouts;
+  - `EmailChannel` (`JavaMailSender`, plain text, notification id in `Message-ID`) with SMTP error classification; `LogChannel` for `local`/`test`;
+  - delivery worker: poll due notifications (`FOR UPDATE SKIP LOCKED`, batch 50), resolve the address via `userById`, `markSent` / `markFailed`;
+  - render the subject (`[SEV] title`) and body into the notification when it is created, so the worker never calls `incidents`. `IncidentCreated` carries title and severity; `IncidentStatusChanged` and `IncidentEscalated` don't yet, so add them to those events (additive, [ADR-0014](adr/architecture/0014-evolve-event-schemas-additively-with-a-schema-version.md)) or read them via `IncidentApi.findById`;
+  - GreenMail/Mailpit in integration tests and in `docker-compose`.
 
 **audit**
 - [ ] Add `incident_id` to `AuditEntry` and make `timeline(INCIDENT, id)` query by it.
@@ -638,4 +656,4 @@ Changes the code needs to match this design and the ADRs. None are implemented y
 2. Is `RESOLVED` terminal, or can an incident be reopened (which would also re-arm escalation)?
 3. When do time-based escalations (no acknowledgement within N minutes) and SLA timers arrive?
 4. Do we need confidential incidents with restricted read access (e.g. security incidents)?
-5. Which real notification channels come first (email, Slack, SMS)?
+5. ~~Which real notification channels come first?~~ Email over SMTP ([ADR-0016](adr/messaging/0016-send-notifications-by-email-over-smtp-without-a-message-broker.md)). Slack/SMS remain open.

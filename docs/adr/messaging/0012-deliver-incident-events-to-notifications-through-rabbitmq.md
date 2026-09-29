@@ -1,7 +1,9 @@
 # ADR-0012: Deliver incident events to notifications through RabbitMQ
 
 ## Status
-Proposed — 2026-09-25. Implements the "future path" of [ADR-0008](0008-publish-domain-events-through-a-transactional-outbox.md) and refines [ADR-0009](0009-retry-failed-deliveries-and-dead-letter-them.md).
+Rejected — 2026-09-29, in favour of [ADR-0016](0016-send-notifications-by-email-over-smtp-without-a-message-broker.md): no message broker for now; `notifications` sends email over SMTP from inside the monolith. Kept as the reference design if a broker is needed later.
+
+Originally proposed 2026-09-25 to implement the "future path" of [ADR-0008](0008-publish-domain-events-through-a-transactional-outbox.md) and refine [ADR-0009](0009-retry-failed-deliveries-and-dead-letter-them.md).
 
 ## Context
 Today the outbox relay dispatches events **in-process** to `notifications`, `audit` and `escalations` ([ADR-0008](0008-publish-domain-events-through-a-transactional-outbox.md)). The relay already works with several application instances (`FOR UPDATE SKIP LOCKED`), tracks each subscriber separately, and keeps events of one incident in order per subscriber. So a broker is not needed to scale the monolith.

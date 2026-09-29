@@ -4,7 +4,7 @@
 Proposed — 2026-09-25. Renamed from "Deliver notifications outside the incident transaction": the outbox serves every event of every publishing module, not only notifications.
 
 ## Context
-When an incident is created, responders of the owning team must be notified. Notification channels (email, Slack, SMS) are external, slow and sometimes down. If delivery happened inside the incident transaction:
+When an incident is created, responders of the owning team must be notified. Notification channels (email over SMTP today, [ADR-0016](0016-send-notifications-by-email-over-smtp-without-a-message-broker.md)) are external, slow and sometimes down. If delivery happened inside the incident transaction:
 - a channel outage would block or roll back incident creation, exactly when things are broken;
 - a rollback *after* sending would notify people about an incident that doesn't exist.
 
@@ -21,7 +21,7 @@ The same problem applies to every event that other modules react to (audit, esca
   - `occurred_at`.
 
   This is the only extra work in the business transaction. Notifications, audit and escalation evaluation all happen after commit.
-- **One delivery row per subscriber.** In the same transaction, the module writes one `outbox_delivery` row per subscriber of that event type (`audit`, `escalations`, `notifications`, or the RabbitMQ publisher from [ADR-0012](0012-deliver-incident-events-to-notifications-through-rabbitmq.md)):
+- **One delivery row per subscriber.** In the same transaction, the module writes one `outbox_delivery` row per subscriber of that event type (`audit`, `escalations`, `notifications`):
   - `event_id`, `subscriber`, `status`, `attempts`, `next_attempt_at`, `last_error`;
   - `status` is `PENDING`, `RETRYING`, `SENT` or `DEAD_LETTERED`.
 
@@ -30,7 +30,7 @@ The same problem applies to every event that other modules react to (audit, esca
 - **Order per aggregate and subscriber.** The relay does not dispatch a delivery while an **earlier** delivery (lower `aggregate_version`) for the same `(subscriber, aggregate_id)` is still `PENDING` or `RETRYING`.
   - A `DEAD_LETTERED` delivery stops blocking, so one poison event doesn't freeze an incident forever.
   - Consumers that depend on order also ignore stale versions ([ADR-0007](../architecture/0007-query-synchronously-publish-side-effects-asynchronously.md)), so a dead letter or a replay can't apply an old transition.
-- **Notification intent.** `notifications` consumes the event idempotently and creates one `Notification` per active member of the relevant team. It delivers through a **stub channel** that logs the message and can be configured to fail in tests.
+- **Notification intent.** `notifications` consumes the event idempotently and creates one `Notification` per active member of the relevant team. A delivery worker in `notifications` then sends each one by **email over SMTP** ([ADR-0016](0016-send-notifications-by-email-over-smtp-without-a-message-broker.md)); a stub channel that logs the message and can be configured to fail is used locally and in tests.
 - **No silent zero-recipient case.** [ADR-0015](../data/0015-deactivate-or-archive-referenced-data-instead-of-deleting-it.md) prevents a team from losing its last active member. This rule is the safety net if `membersOf` still returns no active members, e.g. after users are disabled in the identity provider or data is fixed by hand:
   - the notification goes to all active `ADMIN`s instead, who can reassign the incident or fix the team;
   - a WARN log is written, and `notifications_no_recipients_total` is incremented.
@@ -52,14 +52,14 @@ The same problem applies to every event that other modules react to (audit, esca
   - no lost events: each one is persisted before it's dispatched;
   - dead letters and metrics are per subscriber (`outbox_dead_lettered_total{subscriber}`), so you can see which consumer is broken;
   - per-incident order makes escalation evaluation predictable;
-  - clean migration to RabbitMQ, which still needs the outbox to avoid dual writes ([ADR-0012](0012-deliver-incident-events-to-notifications-through-rabbitmq.md)).
+  - a message broker can be put behind the relay later without dual writes, if a module is ever extracted.
 - **Harder:**
   - notifications are delayed by the polling interval (seconds);
   - more moving parts: outbox and delivery tables, poller, idempotency keys;
   - adding a subscriber means registering it with the publisher's relay; existing events are not backfilled;
   - a failing delivery holds back later deliveries of the same incident for the same subscriber, for up to its retry window;
   - a recipient may rarely get a duplicate message from the external channel (accepted).
-- **Follow-on ADRs:** retry and dead-letter policy ([ADR-0009](0009-retry-failed-deliveries-and-dead-letter-them.md)); RabbitMQ for event delivery ([ADR-0012](0012-deliver-incident-events-to-notifications-through-rabbitmq.md)).
+- **Follow-on ADRs:** retry and dead-letter policy ([ADR-0009](0009-retry-failed-deliveries-and-dead-letter-them.md)); email delivery without a broker ([ADR-0016](0016-send-notifications-by-email-over-smtp-without-a-message-broker.md)).
 
 ## Alternatives considered
 - **Send inside the transaction:** rejected (see Context).
@@ -70,7 +70,7 @@ The same problem applies to every event that other modules react to (audit, esca
   - it has no per-aggregate ordering.
 
   Revisit if a later version adds these, since it would remove our relay code.
-- **Introduce RabbitMQ now:** rejected as out of scope for the first implementation; see [ADR-0012](0012-deliver-incident-events-to-notifications-through-rabbitmq.md) for when.
+- **Put a message broker (RabbitMQ) behind the outbox:** rejected; the relay already covers ordering, retries and several instances ([ADR-0016](0016-send-notifications-by-email-over-smtp-without-a-message-broker.md)).
 
 ## Confirmation
 Integration tests (Testcontainers):
