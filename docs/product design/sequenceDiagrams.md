@@ -37,7 +37,8 @@ sequenceDiagram
 
 ## 2. User as responder
 
-Stories 6, 7 and 8: *paged for a SEV1 and acknowledge it, so that escalation stops*; *reassign to another team, whose on-call is paged immediately*; *raise a SEV3 to SEV1 and the policy starts paging*.
+Stories 7 and 8: *reassign to another team, whose on-call is notified immediately*; *raise a SEV3 to SEV1 and the policy escalates, so that urgency matches reality*.
+Escalation always **raises priority** (and may move the incident to another team); it is triggered by a person or by a severity change, never by time.
 
 ```mermaid
 sequenceDiagram
@@ -45,34 +46,29 @@ sequenceDiagram
     actor R as Responder
     participant S as Incident Management System
     participant N as Email notifications
-    actor X as Other team / duty manager
+    actor X as Other team
 
     N-->>R: Email "New incident for your team"
     R->>S: Open the team's queue
-    S-->>R: Open incidents, most urgent first
+    S-->>R: Open incidents, highest priority first
+    R->>S: Acknowledge
+    S-->>R: Incident in progress
 
     opt Urgency is higher than reported
         R->>S: Raise severity (e.g. SEV3 → SEV1)
+        alt Severity crosses the team's policy threshold
+            S->>S: Escalate automatically: raise priority, hand over to the policy's team
+            S->>N: Tell the new owning team and the reporter
+            N-->>X: Email "Escalated incident, priority P1"
+        else Below the threshold
+            S-->>R: Severity updated, handling unchanged
+        end
     end
 
-    loop SEV1: page until someone acknowledges
-        S->>N: Page the on-call responder
-        N-->>R: Email "SEV1 — please acknowledge"
-    end
-
-    alt Responder acknowledges in time
-        R->>S: Acknowledge
-        S-->>R: Paging stopped, incident in progress
-    else Nobody acknowledges
-        S->>S: Escalate automatically
-        S->>N: Page the next level
-        N-->>X: Email "SEV1 escalated to you"
-    end
-
-    opt Another team should own it
-        R->>S: Reassign to another team, with a reason
-        S->>N: Page that team now
-        N-->>X: Email "Incident reassigned to you"
+    opt Needs more urgent or different handling
+        R->>S: Escalate with a reason (higher priority, optionally another team)
+        S->>N: Tell the owning team and the reporter
+        N-->>X: Email "Incident escalated to you"
     end
 
     R->>S: Add investigation comments
