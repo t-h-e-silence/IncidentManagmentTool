@@ -1,20 +1,21 @@
 # Incident Management System — System Design
 
-**Updated:** 2026-09-29
+**Updated:** 2026-10-01
 **Scope:** responsibilities, data, relationships and data flow of the five modules.
-**Related:** [domain-model.md](domain-model.md) (overview), [adr/](adr/README.md) (decisions), [c4-model.md](c4-model.md) (C4 diagrams).
+**Related:** [product design](product%20design/productDesign.md) (what and why), [c4-model.md](c4-model.md) (C4 diagrams), [development-plan.md](development-plan.md) (build order and progress).
 
-This document applies the decisions in ADR-0001 … ADR-0016 (ADR-0012 is rejected). Where it and an ADR disagree, the ADR wins, and this document should be fixed.
+The product design says *what* and *why*; this document says *how*. Where they differ, the decisions in
+[development-plan.md](development-plan.md) apply: the lifecycle is `OPEN → IN_PROGRESS → RESOLVED` as described here,
+and monitoring-system (SYSTEM) reporters are out of scope for now.
 
-Fields and methods marked **(proposed)** do not exist in code yet; everything else matches the current code
-(`*.api`, `*.domain`, `organization.user`, `organization.team`, `V1__organization_schema.sql`).
-Section 10 lists the proposed changes as a checklist.
+The code is being rebuilt from scratch, so nothing here exists in code until the plan's checkbox for it is ticked.
+Items marked **(proposed)** were additions to the earlier design; they are all part of the plan.
 
 ---
 
 ## 1. Goal and module map
 Responders **create, escalate, comment on and resolve** incidents. Each incident is owned by **one team** at a time, and every significant action leaves an **immutable audit trail**.
-The system is a modular monolith ([ADR-0001](adr/architecture/0001-use-a-modular-monolith.md)) with one PostgreSQL schema per module ([ADR-0003](adr/data/0003-give-each-module-its-own-database-schema.md)).
+The system is a modular monolith with one PostgreSQL schema per module.
 
 | Module | Responsible for | Owns (schema) | Exposes | Depends on |
 |---|---|---|---|---|
@@ -37,9 +38,9 @@ flowchart TD
     organization -. config events .-> audit
     escalations -. EscalationPolicyChanged .-> audit
 ```
-Solid = synchronous call to the target's `api` package. Dotted = asynchronous event via the publisher's outbox ([ADR-0008](adr/messaging/0008-publish-domain-events-through-a-transactional-outbox.md)).
+Solid = synchronous call to the target's `api` package. Dotted = asynchronous event via the publisher's outbox.
 
-**The graph is acyclic.** `incidents` never depends on `escalations`. `escalations` asks the owner of the data to change it through a synchronous **command**, `IncidentApi.escalate` ([ADR-0007](adr/architecture/0007-query-synchronously-publish-side-effects-asynchronously.md)), and `incidents` publishes the resulting `IncidentEscalated`. For the same reason, `organization` never asks `incidents` or `escalations` anything: it publishes `TeamArchived`, and `escalations` reacts ([ADR-0015](adr/data/0015-deactivate-or-archive-referenced-data-instead-of-deleting-it.md)).
+**The graph is acyclic.** `incidents` never depends on `escalations`. `escalations` asks the owner of the data to change it through a synchronous **command**, `IncidentApi.escalate`, and `incidents` publishes the resulting `IncidentEscalated`. For the same reason, `organization` never asks `incidents` or `escalations` anything: it publishes `TeamArchived`, and `escalations` reacts.
 
 ---
 
@@ -52,7 +53,7 @@ Solid = synchronous call to the target's `api` package. Dotted = asynchronous ev
   - memberships with a per-team role (`RESPONDER | TEAM_LEAD`);
   - categories → team routing;
   - configuration events, including `TeamArchived` (proposed).
-- **Enforces** ([ADR-0015](adr/data/0015-deactivate-or-archive-referenced-data-instead-of-deleting-it.md)):
+- **Enforces**:
   - unique email;
   - unique team and category names;
   - **a team always has ≥ 1 active member**, so the last active member can't be deactivated;
@@ -65,13 +66,13 @@ Solid = synchronous call to the target's `api` package. Dotted = asynchronous ev
 - **Does:**
   - report an incident (team resolved from the category);
   - change status, severity and priority;
-  - **escalate** (proposed): reassign to another team and/or raise priority, manually or on behalf of `escalations` ([ADR-0011](adr/incidents/0011-assign-incidents-to-teams-and-escalate-by-reassignment-or-priority.md));
+  - **escalate** (proposed): reassign to another team and/or raise priority, manually or on behalf of `escalations`;
   - comment;
   - offer each team its queue (proposed);
   - write its own events to its outbox in the same transaction.
 - **Enforces:**
   - the status lifecycle;
-  - the authorization rules of [ADR-0013](adr/security/0013-authenticate-users-and-authorize-incident-access-by-team.md) (owning team changes, reporter comments, admin reassigns);
+  - the authorization rules of §7 (owning team changes, reporter comments, admin reassigns);
   - it is the **only writer** of `team_id` and `priority`;
   - a RESOLVED incident is read-only.
 - **Does not:**
@@ -94,8 +95,8 @@ Solid = synchronous call to the target's `api` package. Dotted = asynchronous ev
 - **Does:**
   - turn events into one `Notification` per recipient (idempotent on `sourceEventId + recipientId`);
   - fall back to the active admins when a team has no active members;
-  - deliver each notification by **email over SMTP** from its own delivery worker ([ADR-0016](adr/messaging/0016-send-notifications-by-email-over-smtp-without-a-message-broker.md)); a `LOG` stub channel in `local`/`test`;
-  - retry transient failures with backoff, dead-letter permanent failures at once ([ADR-0009](adr/messaging/0009-retry-failed-deliveries-and-dead-letter-them.md));
+  - deliver each notification by **email over SMTP** from its own delivery worker; a `LOG` stub channel in `local`/`test`;
+  - retry transient failures with backoff, dead-letter permanent failures at once;
   - manual replay.
 - **Does not:** decide who is responsible (asks `organization.membersOf`).
 
@@ -110,7 +111,7 @@ Solid = synchronous call to the target's `api` package. Dotted = asynchronous ev
 ### shared
 Not a business module: a small kernel that every module may depend on. It owns no schema and no API.
 - **Contains:**
-  - `DomainEvent` and `EventMetadata`, the envelope every event carries (`eventId` for idempotency, `occurredAt`, `actorId`, `correlationId`, `schemaVersion`) ([ADR-0007](adr/architecture/0007-query-synchronously-publish-side-effects-asynchronously.md), [ADR-0014](adr/architecture/0014-evolve-event-schemas-additively-with-a-schema-version.md));
+  - `DomainEvent` and `EventMetadata`, the envelope every event carries (`eventId` for idempotency, `occurredAt`, `actorId`, `correlationId`, `schemaVersion`);
   - `DomainException` (→ HTTP 409/422) and `NotFoundException` (→ HTTP 404);
   - `Checks`, argument checks shared by domain classes.
 - **Does not:**
@@ -125,8 +126,8 @@ Common conventions:
 - ids are UUIDs;
 - timestamps are `timestamptz` (UTC);
 - mutable aggregates carry `version` (optimistic locking). The incident version is also the `aggregateVersion` of its events;
-- rows referenced from other modules are **never deleted**; they are deactivated or archived instead ([ADR-0015](adr/data/0015-deactivate-or-archive-referenced-data-instead-of-deleting-it.md));
-- Flyway migrates as `ims_migrator`, and the application connects as `ims_app`, which has no DDL rights ([ADR-0003](adr/data/0003-give-each-module-its-own-database-schema.md)).
+- rows referenced from other modules are **never deleted**; they are deactivated or archived instead;
+- Flyway migrates as `ims_migrator`, and the application connects as `ims_app`, which has no DDL rights.
 
 ### 3.1 organization (implemented: `V1__organization_schema.sql`)
 
@@ -182,9 +183,9 @@ Common conventions:
 | What happened | id | uuid | ✔ | PK |
 | | title | varchar(200) | ✔ | not blank |
 | | description | text (≤ 5000) | – | |
-| | attributes | jsonb | – | **(proposed)** affected service, environment, labels ([ADR-0002](adr/data/0002-use-postgresql-as-the-only-data-store.md)) |
+| | attributes | jsonb | – | **(proposed)** affected service, environment, labels |
 | Who owns it | category_id, category_name | uuid, varchar(100) | ✔ | name is a snapshot at creation |
-| | team_id | uuid | ✔ | **current** owning team: from the category at creation, changed only by escalation ([ADR-0011](adr/incidents/0011-assign-incidents-to-teams-and-escalate-by-reassignment-or-priority.md)) |
+| | team_id | uuid | ✔ | **current** owning team: from the category at creation, changed only by escalation |
 | | reporter_id | uuid | ✔ | any active user |
 | How urgent | severity | `SEV1..SEV4` | ✔ | impact; drives automatic escalation |
 | | priority | `P1..P4` | ✔ | **(proposed)** urgency and queue order; defaults from severity |
@@ -202,7 +203,7 @@ Common conventions:
 |---|---|---|---|
 | id | uuid | ✔ | PK |
 | incident_id | uuid | ✔ | FK → incident (same schema) |
-| author_id | uuid | ✔ | member of the owning team, or the reporter ([ADR-0013](adr/security/0013-authenticate-users-and-authorize-incident-access-by-team.md)) |
+| author_id | uuid | ✔ | member of the owning team, or the reporter |
 | text | text (≤ 5000) | ✔ | not blank |
 | created_at | timestamptz | ✔ | |
 
@@ -215,7 +216,7 @@ Common conventions:
 | result | `APPLIED` or `NOT_APPLIED` (+ reason); a repeated call returns this |
 | applied_at | |
 
-**`outbox`** and **`outbox_delivery`** (proposed, [ADR-0008](adr/messaging/0008-publish-domain-events-through-a-transactional-outbox.md)): the same shape in every publishing module.
+**`outbox`** and **`outbox_delivery`** (proposed): the same shape in every publishing module.
 
 | Table | Field | Rule |
 |---|---|---|
@@ -224,9 +225,9 @@ Common conventions:
 | | aggregate_id, aggregate_version | order per incident |
 | `outbox_delivery` | event_id, subscriber | PK; one row per subscriber (`audit`, `escalations`, `notifications`) |
 | | status | `PENDING`, `RETRYING`, `SENT`, `DEAD_LETTERED` |
-| | attempts, next_attempt_at, last_error | retry state ([ADR-0009](adr/messaging/0009-retry-failed-deliveries-and-dead-letter-them.md)) |
+| | attempts, next_attempt_at, last_error | retry state |
 
-Rows whose deliveries are all `SENT` are purged after 7 days ([ADR-0015](adr/data/0015-deactivate-or-archive-referenced-data-instead-of-deleting-it.md)).
+Rows whose deliveries are all `SENT` are purged after 7 days.
 
 ### 3.3 escalations
 
@@ -255,7 +256,7 @@ Rows whose deliveries are all `SENT` are purged after 7 days ([ADR-0015](adr/dat
 
 **`open_incident`** (proposed read model)
 - Columns: `incident_id` PK, `team_id`, `severity`, `priority`, `status`, `version`.
-- Kept up to date from incident events. An event whose `aggregateVersion` ≤ `version` is stale and ignored ([ADR-0007](adr/architecture/0007-query-synchronously-publish-side-effects-asynchronously.md)).
+- Kept up to date from incident events. An event whose `aggregateVersion` ≤ `version` is stale and ignored.
 - Lets escalations skip resolved incidents without calling `incidents`.
 
 **`outbox`, `outbox_delivery`** (for the `escalate` command step and `EscalationPolicyChanged`) and **`processed_events(event_id PK, processed_at)`**, purged after 30 days.
@@ -269,7 +270,7 @@ Rows whose deliveries are all `SENT` are purged after 7 days ([ADR-0015](adr/dat
 | id | ✔ | PK |
 | source_event_id, recipient_id | ✔ | **UNIQUE(source_event_id, recipient_id)**: the idempotency key |
 | incident_id | ✔ | |
-| channel | ✔ | `EMAIL`; `LOG` in `local`/`test` ([ADR-0016](adr/messaging/0016-send-notifications-by-email-over-smtp-without-a-message-broker.md)) |
+| channel | ✔ | `EMAIL`; `LOG` in `local`/`test` |
 | reason | ✔ | `INCIDENT_CREATED`, `INCIDENT_STATUS_CHANGED`, `INCIDENT_ESCALATED` |
 | message | ✔ | |
 | status | ✔ | `PENDING → SENT`, or `PENDING → RETRYING → … → SENT \| DEAD_LETTERED` |
@@ -277,7 +278,7 @@ Rows whose deliveries are all `SENT` are purged after 7 days ([ADR-0015](adr/dat
 
 ### 3.5 audit
 
-**`audit_entry`** (append-only: `ims_app` has only `INSERT` and `SELECT`, [ADR-0010](adr/audit/0010-make-the-audit-log-append-only.md))
+**`audit_entry`** (append-only: `ims_app` has only `INSERT` and `SELECT`)
 
 | Field | Req. | Rule |
 |---|---|---|
@@ -315,7 +316,7 @@ erDiagram
     INCIDENT ||..o{ AUDIT_ENTRY : "timeline (id ref)"
 ```
 Solid lines are real foreign keys **inside** one schema. Dotted lines are plain id references **across** schemas: there is
-no FK ([ADR-0003](adr/data/0003-give-each-module-its-own-database-schema.md)), and consistency is kept by the application.
+no FK, and consistency is kept by the application.
 
 | From → To | Cardinality | How |
 |---|---|---|
@@ -331,7 +332,7 @@ no FK ([ADR-0003](adr/data/0003-give-each-module-its-own-database-schema.md)), a
 | incident → notification | 1 → 0..* (one per event × recipient) | id |
 | anything → audit_entry | 1 → 0..* | `entity_type + entity_id`, plus `incident_id` |
 
-**Why id-only references are safe** ([ADR-0015](adr/data/0015-deactivate-or-archive-referenced-data-instead-of-deleting-it.md)):
+**Why id-only references are safe**:
 - referenced rows are never deleted: users are deactivated or anonymized (the id stays), teams are archived, categories and policies are deactivated;
 - ids are UUIDs, never reused;
 - the id is validated through the owning module's API at write time (e.g. `teamForCategory`, `roleOf`, the target-team check).
@@ -363,7 +364,7 @@ sequenceDiagram
 
 ### 5.2 Plan the team's queue (proposed)
 1. The team opens its queue with `IncidentApi.queueFor(teamId)`: all non-resolved incidents it currently owns, ordered by **priority, severity, created_at**.
-2. The team decides internally who works on what. There is no individual assignee ([ADR-0011](adr/incidents/0011-assign-incidents-to-teams-and-escalate-by-reassignment-or-priority.md)).
+2. The team decides internally who works on what. There is no individual assignee.
 3. To make an incident **more** urgent, a member **escalates** it with a higher priority (§5.4). Lowering priority is an ordinary change, `changePriority`, which publishes `IncidentPriorityChanged`.
 4. `audit` records every change.
 
@@ -388,7 +389,7 @@ The automatic path is described in §8.
 
 ### 5.5 Events
 
-Every event carries `EventMetadata(eventId, occurredAt, actorId, correlationId, schemaVersion)`, plus **`aggregateId` and `aggregateVersion` (proposed)** for incident events ([ADR-0007](adr/architecture/0007-query-synchronously-publish-side-effects-asynchronously.md)).
+Every event carries `EventMetadata(eventId, occurredAt, actorId, correlationId, schemaVersion)`, plus **`aggregateId` and `aggregateVersion` (proposed)** for incident events.
 
 | Event | Publisher | Payload (besides metadata) | Consumers |
 |---|---|---|---|
@@ -404,12 +405,12 @@ Every event carries `EventMetadata(eventId, occurredAt, actorId, correlationId, 
 
 Delivery rules:
 - **At-least-once.** Each consumer is idempotent by a unique key in its own schema: `processed_events` in escalations, `UNIQUE(source_event_id, recipient_id)` in notifications, `UNIQUE(event_id)` in audit.
-- **Ordered per incident and subscriber** by the relay, and stale versions are ignored by `escalations` ([ADR-0008](adr/messaging/0008-publish-domain-events-through-a-transactional-outbox.md)).
-- **Schemas evolve additively**, and a breaking change bumps `schemaVersion` with a transition period ([ADR-0014](adr/architecture/0014-evolve-event-schemas-additively-with-a-schema-version.md)).
-- **Transport:** in-process, through the outbox relay. There is no message broker ([ADR-0016](adr/messaging/0016-send-notifications-by-email-over-smtp-without-a-message-broker.md)).
+- **Ordered per incident and subscriber** by the relay, and stale versions are ignored by `escalations`.
+- **Schemas evolve additively**, and a breaking change bumps `schemaVersion` with a transition period.
+- **Transport:** in-process, through the outbox relay. There is no message broker.
 
 ### 5.6 Failures
-- **One subscriber fails:** only its delivery row retries (10 s … 15 min), then dead-letters. The other subscribers are unaffected ([ADR-0008](adr/messaging/0008-publish-domain-events-through-a-transactional-outbox.md), [ADR-0009](adr/messaging/0009-retry-failed-deliveries-and-dead-letter-them.md)).
+- **One subscriber fails:** only its delivery row retries (10 s … 15 min), then dead-letters. The other subscribers are unaffected.
 - **The SMTP server fails for one recipient:** only that `Notification` retries. Connection errors and `4xx` replies are transient; a `5xx` reply for the recipient (e.g. `550` unknown mailbox) dead-letters at once.
 - **The SMTP server is down:** incident creation is unaffected; notifications stay `RETRYING` and are sent when it is back, or dead-letter after ~21 minutes.
 - **Dead letters:**
@@ -425,7 +426,7 @@ Delivery rules:
 |---|---|
 | `id` | Every other module references users only by this id (reporter, comment author, notification recipient, audit actor). It survives deactivation and anonymization |
 | `name` | Shown in the incident, queue and timeline |
-| `email` (unique, lower-case) | Contact for notifications; maps the identity provider's token to a user ([ADR-0013](adr/security/0013-authenticate-users-and-authorize-incident-access-by-team.md)) |
+| `email` (unique, lower-case) | Contact for notifications; maps the identity provider's token to a user |
 | `system_role` | `ADMIN` manages teams, categories and policies, can reassign any open incident and replay dead letters; everyone else is `USER` |
 | memberships: `team_id` + `role` | Authorization: may this user change this incident? Who gets notified? `TEAM_LEAD` has no extra rights in v1 |
 | `active`, `deactivated_at` | People leave, but their id stays in incidents and audit. Deactivated users can't log in or act, and aren't notified |
@@ -436,9 +437,9 @@ Delivery rules:
 - only `organization` stores contact data;
 - other modules store only `userId` and fetch contacts at delivery time (`membersOf`, `userById`);
 - audit payloads contain ids, not emails;
-- erasure anonymizes the user and keeps the id ([ADR-0015](adr/data/0015-deactivate-or-archive-referenced-data-instead-of-deleting-it.md)).
+- erasure anonymizes the user and keeps the id.
 
-**Authentication** ([ADR-0013](adr/security/0013-authenticate-users-and-authorize-incident-access-by-team.md)): the `X-User-Id` header works only in the `local` and `test` profiles. Other profiles require OIDC.
+**Authentication**: the `X-User-Id` header works only in the `local` and `test` profiles. Other profiles require OIDC.
 
 **SYSTEM actor (proposed):** one seeded, non-loginable user with a well-known id (e.g. `00000000-0000-0000-0000-000000000001`). It is the `actorId` for automatic actions such as policy-driven escalations.
 
@@ -448,7 +449,7 @@ Delivery rules:
 
 **To describe it fully:** `title`, `description`, `category` (+ name snapshot), `attributes` (affected service, environment, labels), `reporter`, `created_at`, and the comments.
 
-**To route it to the right team** ([ADR-0006](adr/incidents/0006-route-incidents-to-teams-by-category.md), [ADR-0011](adr/incidents/0011-assign-incidents-to-teams-and-escalate-by-reassignment-or-priority.md)):
+**To route it to the right team**:
 - `team_id` comes from the category at creation. Re-routing a category affects only new incidents.
 - The incident belongs to **one team at a time** and never to an individual. The team decides internally who works on it.
 - `team_id` changes only by **escalation** (reassignment). The new team becomes the only owner, and earlier owners are visible in the audit timeline.
@@ -479,7 +480,7 @@ stateDiagram-v2
 ```
 Escalation is **not** a status. It changes the owning team and/or priority, so an incident can be `OPEN` and escalated, or `IN_PROGRESS` and escalated.
 
-**Rules** (full table in [ADR-0013](adr/security/0013-authenticate-users-and-authorize-incident-access-by-team.md)):
+**Rules:**
 - any active user may report and read incidents;
 - only members of the **current** owning team may change status, severity or priority, escalate, or resolve;
 - members of the owning team and the reporter may comment;
@@ -544,7 +545,7 @@ sequenceDiagram
     I-)E: IncidentEscalated → open_incident (team B, P1, v6)
 ```
 Key properties:
-- **No distributed transaction.** The decision commits in `escalations`. The incident change and `IncidentEscalated` commit together in `incidents`, driven by the escalations outbox step, which is retried and dead-lettered like any other delivery ([ADR-0009](adr/messaging/0009-retry-failed-deliveries-and-dead-letter-them.md)).
+- **No distributed transaction.** The decision commits in `escalations`. The incident change and `IncidentEscalated` commit together in `incidents`, driven by the escalations outbox step, which is retried and dead-lettered like any other delivery.
 - **Idempotent everywhere:**
   - `processed_events` on the consumer side;
   - `UNIQUE(incident_id, policy_id)` on decisions, with a deterministic decision id;
@@ -584,7 +585,7 @@ Key properties:
 - `payload`: ids only, no contact data, stored with its `schemaVersion`.
 - `incident_id` **(proposed)**: equal to `entity_id` here. It matters for entries about other entities (e.g. notifications), so that `AuditApi.timeline(INCIDENT, incidentId)` shows everything.
 
-**Guarantees** ([ADR-0010](adr/audit/0010-make-the-audit-log-append-only.md)):
+**Guarantees**:
 - one entry per `event_id`;
 - no UPDATE or DELETE: DB grants for `ims_app`, and no repository methods;
 - mistakes are fixed with a correction entry (`AuditEntry.correctionOf`) that references the original;
@@ -592,68 +593,15 @@ Key properties:
 
 ---
 
-## 10. Follow-up changes
-Changes the code needs to match this design and the ADRs. None are implemented yet.
-
-**incidents**
-- [ ] Add `priority`, `escalationLevel`, `escalatedAt`, `acknowledgedAt`, `resolvedBy` and `version` to `Incident`.
-- [ ] Add `escalate(...)` (manual: 409 when nothing changes; automatic: `APPLIED` / `NOT_APPLIED`, idempotent by `decisionId` via `applied_escalation`) and `changePriority` (lowering only) to `Incident` and `IncidentApi`.
-- [ ] Add `IncidentApi.queueFor(teamId)`, sorted by priority, severity, created_at.
-- [ ] Move `IncidentEscalated` from `escalations.api.events` to `incidents.api.events`, and add `IncidentPriorityChanged`.
-- [ ] Authorization per [ADR-0013](adr/security/0013-authenticate-users-and-authorize-incident-access-by-team.md): current owning team for changes, the reporter may comment, `ADMIN` may reassign.
-- [ ] Add persistence: JPA entities, Flyway `db/migration/incidents`, `outbox` + `outbox_delivery` and a relay that keeps per-incident order.
-
-**shared**
-- [ ] Add `aggregateId` and `aggregateVersion` to incident events (`EventMetadata` or the event records).
-- [ ] Event deserialization ignores unknown fields; add JSON examples per event version ([ADR-0014](adr/architecture/0014-evolve-event-schemas-additively-with-a-schema-version.md)).
-
-**escalations**
-- [ ] `EscalationPolicy.evaluate` creates a random decision id. Make it deterministic from `(incidentId, policyId)` and add `UNIQUE(incident_id, policy_id)`.
-- [ ] Add `trigger` and `triggeredBy` to `EscalationDecision`, and fix its Javadoc ("the incident stays with its original team" is no longer true).
-- [ ] Add the `open_incident` read model with `version`, and ignore stale events.
-- [ ] Add the outbox step that calls `IncidentApi.escalate` as SYSTEM; update the `EscalationApi` Javadoc, which still refers to `escalations.api.events.IncidentEscalated`.
-- [ ] Consume `TeamArchived` and deactivate the affected policies; add `active` to `EscalationPolicy`.
-- [ ] Validate the policy's target team via organization (exists, not archived).
-
-**notifications**
-- [ ] Notify the reporter on reassignment and on resolve.
-- [ ] Fall back to active admins when a team has no active members; add `notifications_no_recipients_total`.
-- [ ] Add ±20 % jitter to `RetryPolicy` delays ([ADR-0009](adr/messaging/0009-retry-failed-deliveries-and-dead-letter-them.md)).
-- [ ] Add a `permanent` flag to `DeliveryFailedException`; dead-letter permanent failures at once; add metric labels (`severity`, `channel`).
-- [ ] Email delivery ([ADR-0016](adr/messaging/0016-send-notifications-by-email-over-smtp-without-a-message-broker.md)):
-  - add `spring-boot-starter-mail`, `spring.mail.*` and `notifications.mail.from` config (secrets from env), 10 s timeouts;
-  - `EmailChannel` (`JavaMailSender`, plain text, notification id in `Message-ID`) with SMTP error classification; `LogChannel` for `local`/`test`;
-  - delivery worker: poll due notifications (`FOR UPDATE SKIP LOCKED`, batch 50), resolve the address via `userById`, `markSent` / `markFailed`;
-  - render the subject (`[SEV] title`) and body into the notification when it is created, so the worker never calls `incidents`. `IncidentCreated` carries title and severity; `IncidentStatusChanged` and `IncidentEscalated` don't yet, so add them to those events (additive, [ADR-0014](adr/architecture/0014-evolve-event-schemas-additively-with-a-schema-version.md)) or read them via `IncidentApi.findById`;
-  - GreenMail/Mailpit in integration tests and in `docker-compose`.
-
-**audit**
-- [ ] Add `incident_id` to `AuditEntry` and make `timeline(INCIDENT, id)` query by it.
-- [ ] Extend `AuditEntityType` with `USER`, `TEAM`, `CATEGORY` and `ESCALATION_POLICY`.
-
-**organization**
-- [ ] Seed the SYSTEM actor.
-- [ ] Add configuration events (membership, category routing, user deactivation, `TeamArchived`) so admin actions are audited.
-- [ ] Implement `OrganizationApi` with the checks that span several tables ([ADR-0015](adr/data/0015-deactivate-or-archive-referenced-data-instead-of-deleting-it.md)):
-  - the last active member of a team can't be deactivated;
-  - at least one active admin remains;
-  - a team can't be archived while an active category routes to it;
-  - `membersOf` skips inactive users;
-  - add `activeAdmins()` for the notification fallback;
-  - anonymize a user on erasure.
-
-**platform**
-- [ ] Add `spring-modulith-starter-test` and `archunit-junit5` (test scope) so the boundary checks of ADR-0001/0003/0007 exist.
-- [ ] Create the DB roles `ims_migrator` and `ims_app`; grant `ims_app` only `INSERT`/`SELECT` on `audit.audit_entry`.
-- [ ] Register the `X-User-Id` filter only in the `local` and `test` profiles; fail startup without OIDC otherwise.
-- [ ] Add the purge job for `outbox` (7 days) and `processed_events` (30 days).
-- [ ] Alert rules: SEV1/SEV2 notification dead letters page the platform on-call; audit dead letters raise a ticket.
+## 10. Implementation progress
+The code is built from scratch following [development-plan.md](development-plan.md), which tracks each step with checkboxes.
+Fields and methods marked **(proposed)** above become real as the plan's phases are completed.
 
 ---
 
 ## 11. Open questions
-1. Which actions become `TEAM_LEAD`-only later: resolving SEV1, lowering severity, reassigning? (v1: none, [ADR-0013](adr/security/0013-authenticate-users-and-authorize-incident-access-by-team.md).)
+1. Which actions become `TEAM_LEAD`-only later: resolving SEV1, lowering severity, reassigning? (v1: none.)
 2. Is `RESOLVED` terminal, or can an incident be reopened (which would also re-arm escalation)?
 3. When do time-based escalations (no acknowledgement within N minutes) and SLA timers arrive?
 4. Do we need confidential incidents with restricted read access (e.g. security incidents)?
-5. ~~Which real notification channels come first?~~ Email over SMTP ([ADR-0016](adr/messaging/0016-send-notifications-by-email-over-smtp-without-a-message-broker.md)). Slack/SMS remain open.
+5. ~~Which real notification channels come first?~~ Email over SMTP. Slack/SMS remain open.

@@ -1,8 +1,8 @@
 # Incident Management System — C4 Model
 
-**Updated:** 2026-09-29
+**Updated:** 2026-10-01
 **Notation:** [C4 model](https://c4model.com/) — Level 1 System Context, Level 2 Containers, Level 3 Components, plus one dynamic view.
-**Related:** [domain-model.md](domain-model.md), [system-design.md](system-design.md), [ADRs](adr/README.md).
+**Related:** [product design](product%20design/productDesign.md), [system-design.md](system-design.md), [development-plan.md](development-plan.md).
 
 **Arrow colours:** blue = synchronous call, orange = asynchronous event (outbox), grey = user / external interaction.
 Colours are mid-tone so they stay readable on both dark (IntelliJ Darcula, GitHub dark) and light backgrounds.
@@ -11,9 +11,9 @@ The diagrams show the **planned** system. Elements marked **(later)** are not pa
 
 | Element | Impl                                          | Later |
 |---|-----------------------------------------------|---|
-| Notification channels | email over SMTP; stub that logs in `local`/`test` (ADR-0016) | Slack, SMS |
-| Event transport | outbox relay dispatches in-process (ADR-0008) | no broker planned (ADR-0016) |
-| Authentication | `X-User-Id` header (ADR-0004)                 | external identity provider (OIDC/JWT) |
+| Notification channels | email over SMTP; stub that logs in `local`/`test` | Slack, SMS |
+| Event transport | outbox relay dispatches in-process | no broker planned |
+| Authentication | `X-User-Id` header                 | external identity provider (OIDC/JWT) |
 | AI investigation assistant | —                                             | separate service with read-only access |
 
 ---
@@ -60,7 +60,7 @@ C4Context
 ---
 
 ## Level 2 — Containers
-One deployable application (modular monolith, ADR-0001) and one database with one schema per module (ADR-0002, ADR-0003). There is no message broker: events go through the outbox in-process, and emails leave through SMTP (ADR-0016).
+One deployable application (modular monolith) and one database with one schema per module. There is no message broker: events go through the outbox in-process, and emails leave through SMTP.
 
 ```mermaid
 %%{init: {"themeVariables": {"textColor": "#8A8F98"}}}%%
@@ -81,7 +81,7 @@ C4Container
 
     Rel(user, app, "Uses", "HTTPS/JSON")
     Rel(app, db, "Reads/writes own schemas; incident + outbox in one transaction", "JDBC")
-    Rel(app, channels, "Sends notification emails (ADR-0016)", "SMTP")
+    Rel(app, channels, "Sends notification emails", "SMTP")
     Rel(app, idp, "Validates tokens (later)", "OIDC")
     Rel(monitoring, app, "Scrapes metrics", "HTTP")
     Rel(ai, app, "Reads incidents and audit timeline", "HTTPS / MCP")
@@ -98,8 +98,8 @@ C4Container
 ---
 
 ## Level 3 — Components of the Incident Management API
-Each module is a component with a public `api` package; everything else is internal (ADR-0001).
-Arrows between modules are either **synchronous** calls to another module's `api` or **asynchronous** events from the publisher's outbox (ADR-0007, ADR-0008).
+Each module is a component with a public `api` package; everything else is internal.
+Arrows between modules are either **synchronous** calls to another module's `api` or **asynchronous** events from the publisher's outbox.
 
 ```mermaid
 %%{init: {"themeVariables": {"textColor": "#8A8F98"}}}%%
@@ -110,11 +110,11 @@ C4Component
 
     Container_Boundary(app, "Incident Management API") {
         Component(org, "organization", "Spring module", "Users, teams, memberships with per-team role, category → team routing. OrganizationApi.")
-        Component(inc, "incidents", "Spring module", "Incident lifecycle, severity, priority, owning team, comments, escalate(). Only writer of team_id and priority (ADR-0011). IncidentApi.")
+        Component(inc, "incidents", "Spring module", "Incident lifecycle, severity, priority, owning team, comments, escalate(). Only writer of team_id and priority. IncidentApi.")
         Component(esc, "escalations", "Spring module", "Escalation policies, automatic escalation decisions (once per incident + policy). EscalationApi.")
         Component(notif, "notifications", "Spring module", "One notification per recipient; delivery worker sends due ones, retry with backoff, dead letter, replay. NotificationApi.")
         Component(audit, "audit", "Spring module", "Append-only audit entries, incident timeline. AuditApi (read-only).")
-        Component(relay, "Outbox relay", "Scheduled poller", "Reads PENDING outbox rows (FOR UPDATE SKIP LOCKED) and dispatches events; retries and dead-letters (ADR-0009).")
+        Component(relay, "Outbox relay", "Scheduled poller", "Reads PENDING outbox rows (FOR UPDATE SKIP LOCKED) and dispatches events; retries and dead-letters.")
         Component(channel, "Channel adapter", "NotificationChannel", "EmailChannel (JavaMailSender); LogChannel stub in local/test.")
     }
 
@@ -162,7 +162,7 @@ Not drawn to keep the diagram readable: `escalations`, `notifications` and `audi
 
 ---
 
-## Dynamic view — automatic escalation (ADR-0011)
+## Dynamic view — automatic escalation
 A responder raises severity SEV2 → SEV1; the team's policy (threshold SEV1, target team B) escalates the incident.
 
 ```mermaid
