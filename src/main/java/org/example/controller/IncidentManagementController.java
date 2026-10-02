@@ -15,6 +15,11 @@ import org.example.audit.service.AuditService;
 import org.example.common.model.Actor;
 import org.example.common.model.Recipient;
 import org.example.common.model.Severity;
+import org.example.controller.model.EscalateCommand;
+import org.example.escalations.model.EscalationRecipients;
+import org.example.escalations.model.EscalationRecord;
+import org.example.escalations.model.EscalationView;
+import org.example.escalations.service.EscalationService;
 import org.example.incidents.model.CommentView;
 import org.example.incidents.model.IncidentChange;
 import org.example.incidents.model.IncidentSummary;
@@ -55,13 +60,16 @@ public class IncidentManagementController {
     private final IncidentService incidents;
     private final AuditService audit;
     private final NotificationService notifications;
+    private final EscalationService escalations;
 
     public IncidentManagementController(OrganizationService organization, IncidentService incidents,
-                                        AuditService audit, NotificationService notifications) {
+                                        AuditService audit, NotificationService notifications,
+                                        EscalationService escalations) {
         this.organization = organization;
         this.incidents = incidents;
         this.audit = audit;
         this.notifications = notifications;
+        this.escalations = escalations;
     }
 
     // ---------------------------------------------------------------- organization
@@ -167,8 +175,8 @@ public class IncidentManagementController {
     }
 
     /**
-     * Raise or lower severity. Raising it as an escalation (with a reason, optionally to another team) is
-     * {@code escalateIncident} (planned).
+     * Raise or lower severity, e.g. to correct the reporter's estimate. No emails; an escalation (with a reason,
+     * optionally to another team, and emails) is {@link #escalateIncident}.
      */
     public IncidentView changeSeverity(UUID actorId, UUID incidentId, Severity severity) {
         Actor actor = organization.getActiveActor(actorId);
@@ -176,6 +184,38 @@ public class IncidentManagementController {
         audit(actor, AuditAction.SEVERITY_CHANGED, incidentId, newCorrelationId(),
                 "from", change.before().severity().name(), "to", change.after().severity().name());
         return change.after();
+    }
+
+    /**
+     * Escalates: severity goes up, and the incident may be handed over to another active team. The owning team,
+     * the previous team (if handed over) and the reporter each get their own email, built by the escalations module.
+     * By a member of the owning team.
+     */
+    public IncidentView escalateIncident(UUID actorId, UUID incidentId, EscalateCommand command) {
+        Actor actor = organization.getActiveActor(actorId);
+        if (command.targetTeamId() != null) {
+            organization.requireActiveTeam(command.targetTeamId());
+        }
+        IncidentChange change = incidents.escalate(actor, incidentId, command.severity(), command.targetTeamId());
+        IncidentView before = change.before();
+        IncidentView after = change.after();
+        audit(actor, AuditAction.ESCALATED, incidentId, newCorrelationId(),
+                "fromSeverity", before.severity().name(), "toSeverity", after.severity().name(),
+                "fromTeam", before.teamId().toString(), "toTeam", after.teamId().toString(),
+                "reason", command.reason());
+
+        boolean handedOver = !before.teamId().equals(after.teamId());
+        String fromTeamName = organization.getTeam(before.teamId()).name();
+        String toTeamName = handedOver ? organization.getTeam(after.teamId()).name() : fromTeamName;
+        escalations.recordAndNotify(
+                new EscalationRecord(incidentId, after.title(), actor.id(), actor.name(), command.reason(),
+                        before.severity(), after.severity(), before.teamId(), fromTeamName, after.teamId(),
+                        toTeamName),
+                new EscalationRecipients(
+                        teamRecipients(after.teamId()),
+                        handedOver ? organization.getActiveMembers(before.teamId()) : List.of(),
+                        reporterRecipient(after, actor).stream().findFirst()));
+        return after;
     }
 
     /**
@@ -215,6 +255,16 @@ public class IncidentManagementController {
         organization.getActiveActor(actorId);
         incidents.get(incidentId);
         return notifications.getForIncident(incidentId);
+    }
+
+    /**
+     * Escalations of an incident, oldest first.
+     */
+    @Transactional(readOnly = true)
+    public List<EscalationView> getIncidentEscalations(UUID actorId, UUID incidentId) {
+        organization.getActiveActor(actorId);
+        incidents.get(incidentId);
+        return escalations.getEscalations(incidentId);
     }
 
     // ---------------------------------------------------------------- helpers

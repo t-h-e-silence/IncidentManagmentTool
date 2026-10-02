@@ -84,6 +84,39 @@ class IncidentTest {
     }
 
     @Test
+    void escalationRaisesSeverityAndMayHandOver() {
+        incident.acknowledge(NOW);
+
+        incident.escalate(Severity.SEV1, PLATFORM, NOW);
+
+        assertThat(incident.getSeverity()).isEqualTo(Severity.SEV1);
+        assertThat(incident.getTeamId()).isEqualTo(PLATFORM);
+        assertThat(incident.getStatus()).isEqualTo(IncidentStatus.OPEN);
+    }
+
+    @Test
+    void escalationWithinTheTeamKeepsStatus() {
+        incident.acknowledge(NOW);
+
+        incident.escalate(Severity.SEV1, null, NOW);
+
+        assertThat(incident.getTeamId()).isEqualTo(DATABASE);
+        assertThat(incident.getStatus()).isEqualTo(IncidentStatus.IN_PROGRESS);
+    }
+
+    @Test
+    void escalationMustRaiseSeverityAndChangeNothingOtherwise() {
+        assertThatThrownBy(() -> incident.escalate(Severity.SEV2, PLATFORM, NOW))
+                .isInstanceOf(BusinessRuleException.class);
+        assertThatThrownBy(() -> incident.escalate(Severity.SEV3, null, NOW))
+                .isInstanceOf(BusinessRuleException.class);
+        assertThatThrownBy(() -> incident.escalate(Severity.SEV1, DATABASE, NOW))
+                .isInstanceOf(BusinessRuleException.class);
+        assertThat(incident.getSeverity()).isEqualTo(Severity.SEV2);
+        assertThat(incident.getTeamId()).isEqualTo(DATABASE);
+    }
+
+    @Test
     void commentsAreKeptInOrder() {
         incident.addComment(BOB.id(), "first", NOW);
         incident.addComment(DAN.id(), "second", NOW);

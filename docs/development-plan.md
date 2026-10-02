@@ -1,6 +1,6 @@
 # Development plan — Incident Management System (monolith, Controller entry point)
 
-**Status (2026-10-02):** steps 0–4 done (58 unit tests green) · next: step 5 (manual escalation).
+**Status (2026-10-02):** steps 0–5 done (70 unit tests green) · next: step 6 (admin & wrap-up).
 **Automatic escalation is postponed** (2026-10-02): only manual escalation is in this plan.
 Tick a box only when `mvn clean verify` is green; commit after every step.
 
@@ -89,7 +89,7 @@ Changes take the `Actor`, enforce permissions and the lifecycle, and return `Inc
 | `IncidentChange acknowledge(Actor actor, UUID incidentId)` | team member; OPEN → IN_PROGRESS, sets `acknowledgedAt` |
 | `IncidentChange resolve(Actor actor, UUID incidentId, String note)` | team member; OPEN/IN_PROGRESS → RESOLVED; note required |
 | `IncidentChange changeSeverity(Actor actor, UUID incidentId, Severity severity)` | team member; up or down; not RESOLVED; same value → `BusinessRuleException` |
-| `IncidentChange escalate(Actor actor, UUID incidentId, Severity newSeverity, UUID targetTeamId, String reason)` | team member; severity must be **higher**; `targetTeamId` optional, ≠ current; reason required |
+| `IncidentChange escalate(Actor actor, UUID incidentId, Severity newSeverity, UUID targetTeamId)` | team member; severity must be **higher**; `targetTeamId` optional, ≠ current (hand-over makes it `OPEN` again). The reason is required by `EscalateCommand` and kept by audit and escalations |
 | `IncidentChange reassign(Actor actor, UUID incidentId, UUID targetTeamId)` | team member or ADMIN; different team; severity unchanged; status back to `OPEN` (the new team has not acknowledged it). The reason is kept in the audit entry and the email |
 
 `Incident` has `@Version`; a concurrent change → `BusinessRuleException("changed concurrently, retry")`.
@@ -158,13 +158,14 @@ Every method: `actor = organization.getActiveActor(actorId)`, a new `correlation
 - [x] **2. incidents + audit (report & view)** — `Incident`, `Comment`; `IncidentServiceImpl.create/get/listReportedBy`; `AuditServiceImpl` (§2.3); Flyway `V201`, `V301`; Controller #3 (without notify/escalate yet), #4, #5, #13; unit tests.
 - [x] **3. notifications** — `Notification` entity, `NotificationServiceImpl` (templates, `send`), `EmailSender`, `EmailDeliveryJob`; Flyway `V401`; wire into #3; Controller #14; unit tests (mocked `JavaMailSender`, retry/dead-letter rules).
 - [x] **4. working an incident** — acknowledge/resolve/changeSeverity/addComment/listTeamQueue + permissions + optimistic locking; reassign; Controller #6–10, #12; unit tests.
-- [ ] **5. escalations (manual)** — `Escalation` (record), `EscalationServiceImpl` with email builder per receiver (§Key definitions) → `NotificationService.send`; Flyway `V501`; `incidents.escalate`; Controller #11, #15; unit tests.
+- [x] **5. escalations (manual)** — `Escalation` (record), `EscalationServiceImpl` with email builder per receiver (§Key definitions) → `NotificationService.send`; Flyway `V501`; `incidents.escalate`; Controller #11, #15; unit tests.
 - [ ] **6. admin & wrap-up** — Controller #16–18; README (run with `seed` profile, seeded users, Mailpit); update `system-design.md` and `c4-model.md` to this design (Controller orchestration, severity only, manual escalation, escalations → notifications).
 
-### Done notes (steps 0–4)
+### Done notes (steps 0–5)
 - SYSTEM user is created by migration `V101` (needed in every environment); all other users come from the seed.
 - Audit is append-only twice over: no update/delete methods in code, and a database trigger rejects `UPDATE`/`DELETE`.
-- SQL and JPA mappings were checked once against PostgreSQL 17 with the `seed` profile (report → emails → acknowledge → comment → severity → reassign → resolve → timeline), outside the repo; there are no integration tests in the project, as agreed.
+- Escalation emails: owning team first, then previous team, then reporter — each person gets one email, the escalator none.
+- SQL and JPA mappings were checked once against PostgreSQL 17 with the `seed` profile (report → emails → acknowledge → comment → severity → reassign/escalate with hand-over → resolve → timeline), outside the repo; there are no integration tests in the project, as agreed.
 
 ## 5. Seed data (profile `seed`)
 - Location `classpath:db/seed`, added to `spring.flyway.locations` only in the `seed` profile.

@@ -25,6 +25,10 @@ import org.example.common.exception.ForbiddenException;
 import org.example.common.exception.UnauthenticatedException;
 import org.example.common.model.Recipient;
 import org.example.common.model.Severity;
+import org.example.controller.model.EscalateCommand;
+import org.example.escalations.model.EscalationRecipients;
+import org.example.escalations.model.EscalationRecord;
+import org.example.escalations.service.EscalationService;
 import org.example.incidents.model.IncidentChange;
 import org.example.incidents.model.IncidentStatus;
 import org.example.incidents.model.IncidentView;
@@ -55,6 +59,8 @@ class IncidentManagementControllerTest {
     AuditService audit;
     @Mock
     NotificationService notifications;
+    @Mock
+    EscalationService escalations;
     @InjectMocks
     IncidentManagementController controller;
 
@@ -234,6 +240,79 @@ class IncidentManagementControllerTest {
 
         verify(audit, never()).record(any());
         verify(notifications, never()).notifyIncident(any(), anyList());
+    }
+
+    @Test
+    void escalationWithHandOverAuditsThenLetsEscalationsEmail() {
+        when(organization.getActiveActor(DAN.id())).thenReturn(DAN);
+        EscalateCommand command = new EscalateCommand(Severity.SEV1, PLATFORM, "replica lag growing");
+        when(incidents.escalate(DAN, incidentId, Severity.SEV1, PLATFORM)).thenReturn(new IncidentChange(
+                incident(DATABASE, IncidentStatus.IN_PROGRESS, Severity.SEV3),
+                incident(PLATFORM, IncidentStatus.OPEN, Severity.SEV1)));
+        teamName(DATABASE, "Database");
+        teamName(PLATFORM, "Platform");
+        when(organization.getActiveMembers(PLATFORM)).thenReturn(List.of(recipient(CAROL)));
+        when(organization.getActiveMembers(DATABASE)).thenReturn(List.of(recipient(ALICE), recipient(DAN)));
+        when(organization.findRecipient(BOB.id())).thenReturn(Optional.of(recipient(BOB)));
+
+        IncidentView result = controller.escalateIncident(DAN.id(), incidentId, command);
+
+        assertThat(result.teamId()).isEqualTo(PLATFORM);
+        InOrder order = inOrder(organization, incidents, audit, escalations);
+        order.verify(organization).requireActiveTeam(PLATFORM);
+        order.verify(incidents).escalate(DAN, incidentId, Severity.SEV1, PLATFORM);
+        ArgumentCaptor<AuditRecord> record = ArgumentCaptor.forClass(AuditRecord.class);
+        order.verify(audit).record(record.capture());
+        ArgumentCaptor<EscalationRecord> escalation = ArgumentCaptor.forClass(EscalationRecord.class);
+        ArgumentCaptor<EscalationRecipients> recipients = ArgumentCaptor.forClass(EscalationRecipients.class);
+        order.verify(escalations).recordAndNotify(escalation.capture(), recipients.capture());
+
+        assertThat(record.getValue().action()).isEqualTo(AuditAction.ESCALATED);
+        assertThat(record.getValue().details()).containsEntry("fromSeverity", "SEV3")
+                .containsEntry("toSeverity", "SEV1").containsEntry("reason", "replica lag growing");
+        assertThat(escalation.getValue().fromTeamName()).isEqualTo("Database");
+        assertThat(escalation.getValue().toTeamName()).isEqualTo("Platform");
+        assertThat(escalation.getValue().actorName()).isEqualTo("Dan Dba");
+        assertThat(recipients.getValue().owningTeam()).containsExactly(recipient(CAROL));
+        assertThat(recipients.getValue().previousTeam()).containsExactly(recipient(ALICE), recipient(DAN));
+        assertThat(recipients.getValue().reporter()).contains(recipient(BOB));
+        verify(notifications, never()).notifyIncident(any(), anyList());
+    }
+
+    @Test
+    void escalationWithinTheTeamHasNoPreviousTeam() {
+        when(organization.getActiveActor(DAN.id())).thenReturn(DAN);
+        when(incidents.escalate(DAN, incidentId, Severity.SEV1, null)).thenReturn(new IncidentChange(
+                incident(DATABASE, IncidentStatus.IN_PROGRESS, Severity.SEV2),
+                incident(DATABASE, IncidentStatus.IN_PROGRESS, Severity.SEV1)));
+        teamName(DATABASE, "Database");
+        when(organization.getActiveMembers(DATABASE)).thenReturn(List.of(recipient(ALICE), recipient(DAN)));
+        when(organization.findRecipient(BOB.id())).thenReturn(Optional.empty());
+
+        controller.escalateIncident(DAN.id(), incidentId, new EscalateCommand(Severity.SEV1, null, "worse"));
+
+        ArgumentCaptor<EscalationRecipients> recipients = ArgumentCaptor.forClass(EscalationRecipients.class);
+        verify(escalations).recordAndNotify(any(), recipients.capture());
+        assertThat(recipients.getValue().previousTeam()).isEmpty();
+        assertThat(recipients.getValue().reporter()).isEmpty();
+        verify(organization, never()).requireActiveTeam(any());
+    }
+
+    @Test
+    void escalationWithoutReasonIsRejectedBeforeAnything() {
+        assertThatThrownBy(() -> new EscalateCommand(Severity.SEV1, null, "  "))
+                .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    void refusedEscalationIsNeitherAuditedNorEmailed() {
+        when(organization.getActiveActor(CAROL.id())).thenReturn(CAROL);
+        when(incidents.escalate(CAROL, incidentId, Severity.SEV1, null)).thenThrow(new ForbiddenException("no"));
+
+        assertThatThrownBy(() -> controller.escalateIncident(CAROL.id(), incidentId,
+                new EscalateCommand(Severity.SEV1, null, "urgent"))).isInstanceOf(ForbiddenException.class);
+
+        verifyNoInteractions(audit, escalations, notifications);
     }
 
     @Test

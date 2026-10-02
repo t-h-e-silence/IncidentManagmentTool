@@ -93,6 +93,12 @@ public class IncidentServiceImpl implements IncidentService {
     }
 
     @Override
+    public IncidentChange escalate(Actor actor, UUID incidentId, Severity newSeverity, UUID targetTeamId) {
+        return changeByTeamMember(actor, incidentId,
+                incident -> incident.escalate(newSeverity, targetTeamId, clock.instant()));
+    }
+
+    @Override
     public IncidentChange reassign(Actor actor, UUID incidentId, UUID targetTeamId) {
         Incident incident = load(incidentId);
         if (!actor.isMemberOf(incident.getTeamId()) && !actor.isAdmin()) {

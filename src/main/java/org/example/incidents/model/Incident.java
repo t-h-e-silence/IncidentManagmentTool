@@ -158,6 +158,25 @@ public class Incident {
         updatedAt = now;
     }
 
+    /**
+     * Escalation: severity must go up; optionally hands the incident over to another team, which makes it
+     * {@code OPEN} again for that team.
+     *
+     * @param targetTeamId new owning team, or null to keep the current one
+     */
+    public void escalate(Severity newSeverity, UUID targetTeamId, Instant now) {
+        Objects.requireNonNull(newSeverity, "severity");
+        requireNotResolved();
+        if (!newSeverity.isHigherThan(severity)) {
+            throw new BusinessRuleException("An escalation must raise severity above " + severity);
+        }
+        if (targetTeamId != null) {
+            reassign(targetTeamId, now);
+        }
+        severity = newSeverity;
+        updatedAt = now;
+    }
+
     public Comment addComment(UUID authorId, String text, Instant now) {
         requireNotResolved();
         Comment comment = new Comment(this, authorId, text, now);

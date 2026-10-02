@@ -126,6 +126,23 @@ class IncidentServiceImplTest {
     }
 
     @Test
+    void onlyTheOwningTeamEscalates() {
+        stored();
+        saves();
+
+        assertThatThrownBy(() -> service.escalate(CAROL, incident.getId(), Severity.SEV1, null))
+                .isInstanceOf(ForbiddenException.class);
+        assertThatThrownBy(() -> service.escalate(ADA, incident.getId(), Severity.SEV1, PLATFORM))
+                .isInstanceOf(ForbiddenException.class);
+
+        IncidentChange change = service.escalate(DAN, incident.getId(), Severity.SEV1, PLATFORM);
+
+        assertThat(change.before().severity()).isEqualTo(Severity.SEV2);
+        assertThat(change.after().severity()).isEqualTo(Severity.SEV1);
+        assertThat(change.after().teamId()).isEqualTo(PLATFORM);
+    }
+
+    @Test
     void concurrentChangeIsAClearError() {
         stored();
         when(repository.saveAndFlush(any(Incident.class)))

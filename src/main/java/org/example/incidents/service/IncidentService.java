@@ -59,6 +59,12 @@ public interface IncidentService {
     IncidentChange changeSeverity(Actor actor, UUID incidentId, Severity severity);
 
     /**
+     * Escalation by a member of the owning team: severity must go up; {@code targetTeamId} (optional) hands the
+     * incident over to another team. The caller checks that the target team is active.
+     */
+    IncidentChange escalate(Actor actor, UUID incidentId, Severity newSeverity, UUID targetTeamId);
+
+    /**
      * Hand over to another team without changing severity, by a member of the owning team or an admin.
      * The caller checks that the target team is active.
      */
