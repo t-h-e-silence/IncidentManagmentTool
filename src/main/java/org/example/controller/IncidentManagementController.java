@@ -12,6 +12,7 @@ import org.example.audit.model.AuditEntityType;
 import org.example.audit.model.AuditEntryView;
 import org.example.audit.model.AuditRecord;
 import org.example.audit.service.AuditService;
+import org.example.common.exception.ForbiddenException;
 import org.example.common.model.Actor;
 import org.example.common.model.Recipient;
 import org.example.common.model.Severity;
@@ -267,7 +268,47 @@ public class IncidentManagementController {
         return escalations.getEscalations(incidentId);
     }
 
+    // ---------------------------------------------------------------- admin
+
+    /**
+     * Emails that failed every attempt. Admins only.
+     */
+    @Transactional(readOnly = true)
+    public List<NotificationView> listDeadLetteredNotifications(UUID adminId) {
+        requireAdmin(adminId);
+        return notifications.getDeadLettered();
+    }
+
+    /**
+     * Sends a dead-lettered email again. Admins only.
+     */
+    public NotificationView replayNotification(UUID adminId, UUID notificationId) {
+        Actor admin = requireAdmin(adminId);
+        NotificationView notification = notifications.replay(notificationId);
+        audit.record(new AuditRecord(admin.id(), AuditAction.NOTIFICATION_REPLAYED, AuditEntityType.NOTIFICATION,
+                notification.id(), notification.incidentId(), Map.of("recipient", notification.recipientId().toString()),
+                newCorrelationId()));
+        return notification;
+    }
+
+    /**
+     * Everything a user did, oldest first. Admins only.
+     */
+    @Transactional(readOnly = true)
+    public List<AuditEntryView> getUserActivity(UUID adminId, UUID userId) {
+        requireAdmin(adminId);
+        return audit.getActionsByUser(userId);
+    }
+
     // ---------------------------------------------------------------- helpers
+
+    private Actor requireAdmin(UUID actorId) {
+        Actor actor = organization.getActiveActor(actorId);
+        if (!actor.isAdmin()) {
+            throw new ForbiddenException("Only admins may do this");
+        }
+        return actor;
+    }
 
     private void auditStatusChange(Actor actor, IncidentChange change, String correlationId) {
         audit(actor, AuditAction.STATUS_CHANGED, change.after().id(), correlationId,

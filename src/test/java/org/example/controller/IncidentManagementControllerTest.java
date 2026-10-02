@@ -36,6 +36,8 @@ import org.example.incidents.model.ReportIncidentCommand;
 import org.example.incidents.service.IncidentService;
 import org.example.notifications.model.IncidentNotice;
 import org.example.notifications.model.NotificationReason;
+import org.example.notifications.model.NotificationStatus;
+import org.example.notifications.model.NotificationView;
 import org.example.notifications.service.NotificationService;
 import org.example.organization.model.CategoryRouting;
 import org.example.organization.model.TeamView;
@@ -313,6 +315,45 @@ class IncidentManagementControllerTest {
                 new EscalateCommand(Severity.SEV1, null, "urgent"))).isInstanceOf(ForbiddenException.class);
 
         verifyNoInteractions(audit, escalations, notifications);
+    }
+
+    @Test
+    void adminFunctionsRejectNonAdmins() {
+        when(organization.getActiveActor(ALICE.id())).thenReturn(ALICE);
+
+        assertThatThrownBy(() -> controller.listDeadLetteredNotifications(ALICE.id()))
+                .isInstanceOf(ForbiddenException.class);
+        assertThatThrownBy(() -> controller.replayNotification(ALICE.id(), UUID.randomUUID()))
+                .isInstanceOf(ForbiddenException.class);
+        assertThatThrownBy(() -> controller.getUserActivity(ALICE.id(), BOB.id()))
+                .isInstanceOf(ForbiddenException.class);
+        verifyNoInteractions(notifications, audit);
+    }
+
+    @Test
+    void replayIsAuditedOnTheIncidentTimeline() {
+        when(organization.getActiveActor(ADA.id())).thenReturn(ADA);
+        UUID notificationId = UUID.randomUUID();
+        NotificationView replayed = new NotificationView(notificationId, incidentId, DAN.id(), "dan@example.com",
+                NotificationReason.INCIDENT_CREATED, "subject", NotificationStatus.PENDING, 0, NOW, null, NOW, null);
+        when(notifications.replay(notificationId)).thenReturn(replayed);
+
+        assertThat(controller.replayNotification(ADA.id(), notificationId)).isEqualTo(replayed);
+
+        ArgumentCaptor<AuditRecord> record = ArgumentCaptor.forClass(AuditRecord.class);
+        verify(audit).record(record.capture());
+        assertThat(record.getValue().action()).isEqualTo(AuditAction.NOTIFICATION_REPLAYED);
+        assertThat(record.getValue().actorId()).isEqualTo(ADA.id());
+        assertThat(record.getValue().entityId()).isEqualTo(notificationId);
+        assertThat(record.getValue().incidentId()).isEqualTo(incidentId);
+    }
+
+    @Test
+    void adminSeesUserActivity() {
+        when(organization.getActiveActor(ADA.id())).thenReturn(ADA);
+        when(audit.getActionsByUser(BOB.id())).thenReturn(List.of());
+
+        assertThat(controller.getUserActivity(ADA.id(), BOB.id())).isEmpty();
     }
 
     @Test

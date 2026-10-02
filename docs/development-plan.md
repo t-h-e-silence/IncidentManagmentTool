@@ -1,6 +1,6 @@
 # Development plan — Incident Management System (monolith, Controller entry point)
 
-**Status (2026-10-02):** steps 0–5 done (70 unit tests green) · next: step 6 (admin & wrap-up).
+**Status (2026-10-02):** all steps done (73 unit tests green). Postponed items are in §7.
 **Automatic escalation is postponed** (2026-10-02): only manual escalation is in this plan.
 Tick a box only when `mvn clean verify` is green; commit after every step.
 
@@ -159,9 +159,9 @@ Every method: `actor = organization.getActiveActor(actorId)`, a new `correlation
 - [x] **3. notifications** — `Notification` entity, `NotificationServiceImpl` (templates, `send`), `EmailSender`, `EmailDeliveryJob`; Flyway `V401`; wire into #3; Controller #14; unit tests (mocked `JavaMailSender`, retry/dead-letter rules).
 - [x] **4. working an incident** — acknowledge/resolve/changeSeverity/addComment/listTeamQueue + permissions + optimistic locking; reassign; Controller #6–10, #12; unit tests.
 - [x] **5. escalations (manual)** — `Escalation` (record), `EscalationServiceImpl` with email builder per receiver (§Key definitions) → `NotificationService.send`; Flyway `V501`; `incidents.escalate`; Controller #11, #15; unit tests.
-- [ ] **6. admin & wrap-up** — Controller #16–18; README (run with `seed` profile, seeded users, Mailpit); update `system-design.md` and `c4-model.md` to this design (Controller orchestration, severity only, manual escalation, escalations → notifications).
+- [x] **6. admin & wrap-up** — Controller #16–18; README (run with `seed` profile, seeded users, Mailpit); update `system-design.md` and `c4-model.md` to this design (Controller orchestration, severity only, manual escalation, escalations → notifications).
 
-### Done notes (steps 0–5)
+### Done notes
 - SYSTEM user is created by migration `V101` (needed in every environment); all other users come from the seed.
 - Audit is append-only twice over: no update/delete methods in code, and a database trigger rejects `UPDATE`/`DELETE`.
 - Escalation emails: owning team first, then previous team, then reporter — each person gets one email, the escalator none.
