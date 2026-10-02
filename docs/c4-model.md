@@ -1,20 +1,20 @@
 # Incident Management System — C4 Model
 
-**Updated:** 2026-09-29
+**Updated:** 2026-10-02
 **Notation:** [C4 model](https://c4model.com/) — Level 1 System Context, Level 2 Containers, Level 3 Components, plus one dynamic view.
-**Related:** [domain-model.md](domain-model.md), [system-design.md](system-design.md), [ADRs](adr/README.md).
+**Related:** [product design](product%20design/productDesign.md), [system-design.md](system-design.md), [development-plan.md](development-plan.md).
 
-**Arrow colours:** blue = synchronous call, orange = asynchronous event (outbox), grey = user / external interaction.
+**Arrow colours:** blue = synchronous call inside the application, orange = after commit (email delivery), grey = user / external interaction.
 Colours are mid-tone so they stay readable on both dark (IntelliJ Darcula, GitHub dark) and light backgrounds.
 
-The diagrams show the **planned** system. Elements marked **(later)** are not part of Impl:
+The diagrams show the **implemented** system. Elements marked **(later)** are not built:
 
-| Element | Impl                                          | Later |
-|---|-----------------------------------------------|---|
-| Notification channels | email over SMTP; stub that logs in `local`/`test` (ADR-0016) | Slack, SMS |
-| Event transport | outbox relay dispatches in-process (ADR-0008) | no broker planned (ADR-0016) |
-| Authentication | `X-User-Id` header (ADR-0004)                 | external identity provider (OIDC/JWT) |
-| AI investigation assistant | —                                             | separate service with read-only access |
+| Element | Now | Later |
+|---|---|---|
+| User access | Java methods on `IncidentManagementController` (no HTTP); caller passes the acting user id | HTTP API / UI, login (OIDC) |
+| Notification channel | email over SMTP (Mailpit locally) | Slack, SMS |
+| Escalation | manual, by a team member | automatic by team policy |
+| AI investigation assistant | — | separate service with read-only access |
 
 ---
 
@@ -26,41 +26,35 @@ Who uses the system and which external systems it depends on.
 C4Context
     title System Context — Incident Management System
 
-    Person(reporter, "Reporter", "Any user. Reports an incident by choosing a category.")
-    Person(responder, "Responder / Team lead", "Member of a team. Works on, comments on, escalates and resolves the team's incidents.")
-    Person(admin, "Admin", "Manages teams, categories and escalation policies (seeded).")
+    Person(reporter, "Reporter", "Any user. Reports an incident by choosing a category (severity up to SEV2).")
+    Person(responder, "Responder / Team lead", "Member of a team. Acknowledges, comments on, escalates, reassigns and resolves the team's incidents.")
+    Person(admin, "Admin", "Reassigns any incident, replays failed emails, reviews user activity.")
 
-    System(ims, "Incident Management System", "Routes incidents to teams, escalates by reassignment or priority, notifies responders and keeps an immutable audit trail.")
+    System(ims, "Incident Management System", "Routes incidents to teams, escalates by raising severity and handing over, emails the right people and keeps an append-only audit trail.")
 
-    System_Ext(channels, "Email server", "SMTP relay (corporate relay or a provider such as SES). Slack / SMS later.")
-    System_Ext(idp, "Identity provider (later)", "OIDC/JWT login, e.g. Keycloak.")
-    System_Ext(monitoring, "Monitoring", "Prometheus + Grafana: metrics such as dead-lettered notifications.")
-    System_Ext(ai, "AI investigation assistant (later)", "Reads incidents, timelines and runbooks through read-only APIs / MCP.")
+    System_Ext(smtp, "Email server", "SMTP relay (corporate relay or a provider; Mailpit locally).")
+    System_Ext(ai, "AI investigation assistant (later)", "Reads incidents and timelines through read-only functions.")
 
-    Rel(reporter, ims, "Reports incidents, views own incidents", "HTTPS/JSON")
-    Rel(responder, ims, "Works on, escalates and resolves incidents", "HTTPS/JSON")
-    Rel(admin, ims, "Configures teams, categories, policies", "HTTPS/JSON")
-    Rel(ims, channels, "Sends notification emails", "SMTP")
-    Rel(ims, idp, "Validates tokens", "OIDC")
-    Rel(monitoring, ims, "Scrapes metrics", "HTTP /actuator/prometheus")
-    Rel(ai, ims, "Reads incidents and timelines", "HTTPS / MCP")
-    Rel(channels, responder, "Delivers emails to")
+    Rel(reporter, ims, "Reports incidents, follows them", "Controller methods")
+    Rel(responder, ims, "Works on, escalates and resolves incidents", "Controller methods")
+    Rel(admin, ims, "Reassigns; replays failed emails", "Controller methods")
+    Rel(ims, smtp, "Sends notification emails", "SMTP")
+    Rel(ai, ims, "Reads incidents and timelines")
+    Rel(smtp, responder, "Delivers emails to")
 
     UpdateRelStyle(reporter, ims, $textColor="#8A8F98", $lineColor="#8A8F98")
     UpdateRelStyle(responder, ims, $textColor="#8A8F98", $lineColor="#8A8F98")
     UpdateRelStyle(admin, ims, $textColor="#8A8F98", $lineColor="#8A8F98")
-    UpdateRelStyle(ims, channels, $textColor="#8A8F98", $lineColor="#8A8F98")
-    UpdateRelStyle(ims, idp, $textColor="#8A8F98", $lineColor="#8A8F98")
-    UpdateRelStyle(monitoring, ims, $textColor="#8A8F98", $lineColor="#8A8F98")
+    UpdateRelStyle(ims, smtp, $textColor="#8A8F98", $lineColor="#8A8F98")
     UpdateRelStyle(ai, ims, $textColor="#8A8F98", $lineColor="#8A8F98")
-    UpdateRelStyle(channels, responder, $textColor="#8A8F98", $lineColor="#8A8F98")
+    UpdateRelStyle(smtp, responder, $textColor="#8A8F98", $lineColor="#8A8F98")
     UpdateLayoutConfig($c4ShapeInRow="3", $c4BoundaryInRow="1")
 ```
 
 ---
 
 ## Level 2 — Containers
-One deployable application (modular monolith, ADR-0001) and one database with one schema per module (ADR-0002, ADR-0003). There is no message broker: events go through the outbox in-process, and emails leave through SMTP (ADR-0016).
+One deployable application (monolith, no web server) and one PostgreSQL database with one schema per module.
 
 ```mermaid
 %%{init: {"themeVariables": {"textColor": "#8A8F98"}}}%%
@@ -70,130 +64,111 @@ C4Container
     Person(user, "User", "Reporter, responder or admin")
 
     System_Boundary(ims, "Incident Management System") {
-        Container(app, "Incident Management API", "Java 21, Spring Boot 3, Spring Modulith", "Modular monolith: organization, incidents, escalations, notifications, audit. REST API, outbox relay, email delivery worker.")
-        ContainerDb(db, "Database", "PostgreSQL", "One schema per module: organization, incidents, escalations, notifications, audit. Outbox and processed_events tables.")
+        Container(app, "Incident Management application", "Java 21, Spring Boot 3", "Monolith: organization, incidents, audit, notifications, escalations behind IncidentManagementController. Scheduled email delivery job.")
+        ContainerDb(db, "Database", "PostgreSQL 17", "One schema per module: organization, incidents, audit, notifications, escalations. Flyway migrations; demo data with the seed profile.")
     }
 
-    System_Ext(channels, "Email server", "SMTP relay")
-    System_Ext(idp, "Identity provider (later)", "OIDC")
-    System_Ext(monitoring, "Monitoring", "Prometheus + Grafana")
-    System_Ext(ai, "AI investigation assistant (later)", "MCP client")
+    System_Ext(smtp, "Email server", "SMTP relay")
 
-    Rel(user, app, "Uses", "HTTPS/JSON")
-    Rel(app, db, "Reads/writes own schemas; incident + outbox in one transaction", "JDBC")
-    Rel(app, channels, "Sends notification emails (ADR-0016)", "SMTP")
-    Rel(app, idp, "Validates tokens (later)", "OIDC")
-    Rel(monitoring, app, "Scrapes metrics", "HTTP")
-    Rel(ai, app, "Reads incidents and audit timeline", "HTTPS / MCP")
+    Rel(user, app, "Calls user functions", "Java")
+    Rel(app, db, "One transaction per action: incident + audit + notification rows (+ escalation)", "JDBC")
+    Rel(app, smtp, "Sends pending emails after commit", "SMTP")
 
     UpdateRelStyle(user, app, $textColor="#8A8F98", $lineColor="#8A8F98")
     UpdateRelStyle(app, db, $textColor="#8A8F98", $lineColor="#8A8F98")
-    UpdateRelStyle(app, channels, $textColor="#8A8F98", $lineColor="#8A8F98")
-    UpdateRelStyle(app, idp, $textColor="#8A8F98", $lineColor="#8A8F98")
-    UpdateRelStyle(monitoring, app, $textColor="#8A8F98", $lineColor="#8A8F98")
-    UpdateRelStyle(ai, app, $textColor="#8A8F98", $lineColor="#8A8F98")
+    UpdateRelStyle(app, smtp, $textColor="#E07020", $lineColor="#E07020")
     UpdateLayoutConfig($c4ShapeInRow="3", $c4BoundaryInRow="1")
 ```
 
 ---
 
-## Level 3 — Components of the Incident Management API
-Each module is a component with a public `api` package; everything else is internal (ADR-0001).
-Arrows between modules are either **synchronous** calls to another module's `api` or **asynchronous** events from the publisher's outbox (ADR-0007, ADR-0008).
+## Level 3 — Components of the application
+Each module is a component with `model/`, `repository/` and `service/` (interface + Impl). Modules don't call each
+other; the Controller orchestrates them. The only module-to-module call is escalations → notifications.
 
 ```mermaid
 %%{init: {"themeVariables": {"textColor": "#8A8F98"}}}%%
 C4Component
-    title Components — Incident Management API
+    title Components — Incident Management application
 
     Person(user, "User", "Reporter, responder or admin")
 
-    Container_Boundary(app, "Incident Management API") {
-        Component(org, "organization", "Spring module", "Users, teams, memberships with per-team role, category → team routing. OrganizationApi.")
-        Component(inc, "incidents", "Spring module", "Incident lifecycle, severity, priority, owning team, comments, escalate(). Only writer of team_id and priority (ADR-0011). IncidentApi.")
-        Component(esc, "escalations", "Spring module", "Escalation policies, automatic escalation decisions (once per incident + policy). EscalationApi.")
-        Component(notif, "notifications", "Spring module", "One notification per recipient; delivery worker sends due ones, retry with backoff, dead letter, replay. NotificationApi.")
-        Component(audit, "audit", "Spring module", "Append-only audit entries, incident timeline. AuditApi (read-only).")
-        Component(relay, "Outbox relay", "Scheduled poller", "Reads PENDING outbox rows (FOR UPDATE SKIP LOCKED) and dispatches events; retries and dead-letters (ADR-0009).")
-        Component(channel, "Channel adapter", "NotificationChannel", "EmailChannel (JavaMailSender); LogChannel stub in local/test.")
+    Container_Boundary(app, "Incident Management application") {
+        Component(controller, "IncidentManagementController", "Spring component", "The only entry point. Checks the actor, calls the services in order, one transaction per action.")
+        Component(org, "organization", "OrganizationService", "Users, teams with per-team roles, category → team routing, recipients.")
+        Component(inc, "incidents", "IncidentService", "Lifecycle, severity, owning team, comments, permission checks.")
+        Component(audit, "audit", "AuditService", "Append-only audit entries; incident timeline; user activity.")
+        Component(esc, "escalations", "EscalationService", "Escalation history; one email per receiver (owning team, previous team, reporter).")
+        Component(notif, "notifications", "NotificationService", "Email templates, one row per recipient, retries, dead letters, replay.")
+        Component(job, "EmailDeliveryJob", "Scheduled, every 10 s", "Sends due notifications (FOR UPDATE SKIP LOCKED); retries after 1/5/15 min.")
     }
 
-    ContainerDb(db, "Database", "PostgreSQL", "Schemas: organization, incidents, escalations, notifications, audit")
-    System_Ext(channels, "Email server", "SMTP relay")
+    ContainerDb(db, "Database", "PostgreSQL", "Schemas: organization, incidents, audit, notifications, escalations")
+    System_Ext(smtp, "Email server", "SMTP")
 
-    Rel(user, inc, "Report, change status/severity/priority, escalate, comment, resolve", "REST")
-    Rel(user, org, "Configure teams and categories (admin)", "REST")
-    Rel(user, audit, "View incident timeline", "REST")
-
-    Rel(inc, org, "teamForCategory, roleOf, team exists", "sync")
-    Rel(esc, org, "Target team valid", "sync")
-    Rel(esc, inc, "escalate() as SYSTEM, idempotent by decisionId", "sync, from outbox step")
-    Rel(notif, org, "membersOf, userById", "sync")
-
-    Rel(inc, relay, "Incident events via incidents.outbox", "same transaction")
-    Rel(relay, esc, "IncidentCreated, SeverityChanged, StatusChanged", "event")
-    Rel(relay, notif, "IncidentCreated, StatusChanged, IncidentEscalated", "event")
-    Rel(relay, audit, "All incident, escalation and config events", "event")
-
-    Rel(notif, channel, "Deliver")
-    Rel(channel, channels, "Send email", "SMTP")
+    Rel(user, controller, "Report, acknowledge, comment, escalate, reassign, resolve, timeline", "Java")
+    Rel(controller, org, "getActiveActor, getRouting, members, admins, recipients")
+    Rel(controller, inc, "create, acknowledge, resolve, changeSeverity, escalate, reassign, addComment")
+    Rel(controller, audit, "record, getIncidentTimeline")
+    Rel(controller, notif, "notifyIncident, getForIncident, replay")
+    Rel(controller, esc, "recordAndNotify, getEscalations")
+    Rel(esc, notif, "send(escalation emails)")
+    Rel(job, notif, "deliverDue")
+    Rel(job, smtp, "Send email", "SMTP")
     Rel(inc, db, "incidents schema", "JDBC")
-    Rel(org, db, "organization schema", "JDBC")
+    Rel(notif, db, "notifications schema", "JDBC")
 
-    UpdateRelStyle(user, inc, $textColor="#8A8F98", $lineColor="#8A8F98")
-    UpdateRelStyle(user, org, $textColor="#8A8F98", $lineColor="#8A8F98")
-    UpdateRelStyle(user, audit, $textColor="#8A8F98", $lineColor="#8A8F98")
-    UpdateRelStyle(inc, org, $textColor="#4A90E2", $lineColor="#4A90E2")
-    UpdateRelStyle(esc, org, $textColor="#4A90E2", $lineColor="#4A90E2")
-    UpdateRelStyle(esc, inc, $textColor="#4A90E2", $lineColor="#4A90E2")
-    UpdateRelStyle(notif, org, $textColor="#4A90E2", $lineColor="#4A90E2")
-    UpdateRelStyle(inc, relay, $textColor="#E07020", $lineColor="#E07020")
-    UpdateRelStyle(relay, esc, $textColor="#E07020", $lineColor="#E07020")
-    UpdateRelStyle(relay, notif, $textColor="#E07020", $lineColor="#E07020")
-    UpdateRelStyle(relay, audit, $textColor="#E07020", $lineColor="#E07020")
-    UpdateRelStyle(notif, channel, $textColor="#8A8F98", $lineColor="#8A8F98")
-    UpdateRelStyle(channel, channels, $textColor="#8A8F98", $lineColor="#8A8F98")
+    UpdateRelStyle(user, controller, $textColor="#8A8F98", $lineColor="#8A8F98")
+    UpdateRelStyle(controller, org, $textColor="#4A90E2", $lineColor="#4A90E2")
+    UpdateRelStyle(controller, inc, $textColor="#4A90E2", $lineColor="#4A90E2")
+    UpdateRelStyle(controller, audit, $textColor="#4A90E2", $lineColor="#4A90E2")
+    UpdateRelStyle(controller, notif, $textColor="#4A90E2", $lineColor="#4A90E2")
+    UpdateRelStyle(controller, esc, $textColor="#4A90E2", $lineColor="#4A90E2")
+    UpdateRelStyle(esc, notif, $textColor="#4A90E2", $lineColor="#4A90E2")
+    UpdateRelStyle(job, notif, $textColor="#E07020", $lineColor="#E07020")
+    UpdateRelStyle(job, smtp, $textColor="#E07020", $lineColor="#E07020")
     UpdateRelStyle(inc, db, $textColor="#8A8F98", $lineColor="#8A8F98")
-    UpdateRelStyle(org, db, $textColor="#8A8F98", $lineColor="#8A8F98")
+    UpdateRelStyle(notif, db, $textColor="#8A8F98", $lineColor="#8A8F98")
     UpdateLayoutConfig($c4ShapeInRow="4", $c4BoundaryInRow="1")
 ```
 
-Not drawn to keep the diagram readable: `escalations`, `notifications` and `audit` also read/write their own schemas, and every consumer records `processed_events` for idempotency.
+Not drawn to keep the diagram readable: organization, audit and escalations also read/write their own schemas.
 
 ---
 
-## Dynamic view — automatic escalation (ADR-0011)
-A responder raises severity SEV2 → SEV1; the team's policy (threshold SEV1, target team B) escalates the incident.
+## Dynamic view — manual escalation with hand-over
+Dan (Database) escalates a SEV3 incident to SEV1 and hands it over to Platform.
 
 ```mermaid
 %%{init: {"themeVariables": {"textColor": "#8A8F98"}}}%%
 C4Dynamic
-    title Dynamic — severity raised, incident escalated to team B
+    title Dynamic — incident escalated from Database to Platform
 
-    Person(responder, "Responder", "Member of team A")
-    Component(inc, "incidents", "Spring module")
-    Component(relay, "Outbox relay", "Scheduled poller")
-    Component(esc, "escalations", "Spring module")
-    Component(org, "organization", "Spring module")
-    Component(notif, "notifications", "Spring module")
-    Component(audit, "audit", "Spring module")
+    Person(dan, "Dan", "Responder in Database")
+    Component(controller, "IncidentManagementController", "Spring component")
+    Component(org, "organization", "OrganizationService")
+    Component(inc, "incidents", "IncidentService")
+    Component(audit, "audit", "AuditService")
+    Component(esc, "escalations", "EscalationService")
+    Component(notif, "notifications", "NotificationService")
+    Component(job, "EmailDeliveryJob", "Scheduled")
 
-    Rel(responder, inc, "changeSeverity(SEV1); tx: incident + outbox IncidentSeverityChanged", "REST")
-    Rel(relay, esc, "IncidentSeverityChanged; policy.evaluate records EscalationDecision (UNIQUE incident+policy)", "event")
-    Rel(esc, inc, "escalate(team B, P1, SYSTEM, decisionId); tx: incident + outbox IncidentEscalated", "sync")
-    Rel(inc, org, "team B exists and is not archived", "sync")
-    Rel(relay, notif, "IncidentEscalated", "event")
-    Rel(notif, org, "membersOf(team B)", "sync")
-    Rel(relay, audit, "IncidentSeverityChanged, IncidentEscalated", "event")
+    Rel(dan, controller, "escalateIncident(SEV1, Platform, reason)", "Java")
+    Rel(controller, org, "getActiveActor; requireActiveTeam(Platform)")
+    Rel(controller, inc, "escalate: SEV3 → SEV1, team → Platform, status → OPEN")
+    Rel(controller, audit, "record(ESCALATED, from/to, reason)")
+    Rel(controller, esc, "recordAndNotify(record, Platform members, Database members, reporter)")
+    Rel(esc, notif, "send: 'Escalated to you' / 'Handed over to Platform' / 'Your incident was escalated'")
+    Rel(job, notif, "after commit: deliverDue → SMTP")
 
-    UpdateRelStyle(responder, inc, $textColor="#8A8F98", $lineColor="#8A8F98")
-    UpdateRelStyle(relay, esc, $textColor="#E07020", $lineColor="#E07020")
-    UpdateRelStyle(esc, inc, $textColor="#4A90E2", $lineColor="#4A90E2")
-    UpdateRelStyle(inc, org, $textColor="#4A90E2", $lineColor="#4A90E2")
-    UpdateRelStyle(relay, notif, $textColor="#E07020", $lineColor="#E07020")
-    UpdateRelStyle(notif, org, $textColor="#4A90E2", $lineColor="#4A90E2")
-    UpdateRelStyle(relay, audit, $textColor="#E07020", $lineColor="#E07020")
+    UpdateRelStyle(dan, controller, $textColor="#8A8F98", $lineColor="#8A8F98")
+    UpdateRelStyle(controller, org, $textColor="#4A90E2", $lineColor="#4A90E2")
+    UpdateRelStyle(controller, inc, $textColor="#4A90E2", $lineColor="#4A90E2")
+    UpdateRelStyle(controller, audit, $textColor="#4A90E2", $lineColor="#4A90E2")
+    UpdateRelStyle(controller, esc, $textColor="#4A90E2", $lineColor="#4A90E2")
+    UpdateRelStyle(esc, notif, $textColor="#4A90E2", $lineColor="#4A90E2")
+    UpdateRelStyle(job, notif, $textColor="#E07020", $lineColor="#E07020")
 ```
 
-Result: team B owns the incident with priority P1, its members are notified, the status is unchanged, and the
-audit timeline shows the severity change and the escalation under one `correlationId`.
+Result: Platform owns the incident at SEV1 and status `OPEN`; Platform members, the remaining Database members and the
+reporter each get their own email; the timeline shows the escalation with Dan as the actor and the reason.

@@ -1,16 +1,56 @@
 spring:
   application:
     name: incident-management
+  main:
+    # No web server: keep the process running for the scheduled email delivery.
+    keep-alive: true
   datasource:
     url: ${DB_URL:jdbc:postgresql://localhost:5432/incidents}
     username: ${DB_USER:incidents}
     password: ${DB_PASSWORD:incidents}
   jpa:
-    open-in-view: false
     hibernate:
-      # Schema is owned by Flyway (ADR-0002); Hibernate only checks that entities match it.
+      # Schemas are owned by Flyway; Hibernate only checks that entities match them.
       ddl-auto: validate
   flyway:
-    # One folder per module (ADR-0002). Version numbers must be unique across all folders.
-    locations: classpath:db/migration/organization
-    schemas: organization
+    # One folder and one schema per module. Version numbers must be unique across all folders:
+    # organization 1xx, incidents 2xx, audit 3xx, notifications 4xx, escalations 5xx (e.g. V101__organization_schema.sql).
+    locations:
+      - classpath:db/migration/organization
+      - classpath:db/migration/incidents
+      - classpath:db/migration/audit
+      - classpath:db/migration/notifications
+      - classpath:db/migration/escalations
+    schemas: organization,incidents,audit,notifications,escalations
+  mail:
+    host: ${SMTP_HOST:localhost}
+    port: ${SMTP_PORT:1025}
+    username: ${SMTP_USER:}
+    password: ${SMTP_PASSWORD:}
+    properties:
+      mail.smtp.connectiontimeout: 10000
+      mail.smtp.timeout: 10000
+      mail.smtp.writetimeout: 10000
+
+notifications:
+  mail:
+    from: ${MAIL_FROM:incidents@example.com}
+  delivery:
+    # How often the email job sends due notifications.
+    interval: 10s
+    batch-size: 50
+
+---
+# Demo/test data (users, teams, categories with fixed ids): run with --spring.profiles.active=seed
+spring:
+  config:
+    activate:
+      on-profile: seed
+  flyway:
+    locations:
+      - classpath:db/migration/organization
+      - classpath:db/migration/incidents
+      - classpath:db/migration/audit
+      - classpath:db/migration/notifications
+      - classpath:db/migration/escalations
+      - classpath:db/seed
