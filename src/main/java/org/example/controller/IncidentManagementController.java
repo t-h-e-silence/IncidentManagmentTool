@@ -128,6 +128,8 @@ public class IncidentManagementController {
                 "team", incident.teamId().toString(), "severity", incident.severity().name());
         notifications.notifyIncident(notice(incident, NotificationReason.INCIDENT_CREATED, null),
                 teamRecipients(incident.teamId()));
+        log.info("{} reported incident {} ({}, {}) for team {}", actor.name(), incident.id(), incident.severity(),
+                routing.categoryName(), incident.teamId());
         return incident;
     }
 
@@ -176,6 +178,7 @@ public class IncidentManagementController {
         audit(actor, AuditAction.DETAILS_UPDATED, incidentId, newCorrelationId(),
                 "fromTitle", before.title(), "toTitle", after.title(),
                 "descriptionChanged", String.valueOf(!before.description().equals(after.description())));
+        log.info("{} updated title/description of incident {}", actor.name(), incidentId);
         return after;
     }
 
@@ -187,6 +190,7 @@ public class IncidentManagementController {
         CommentView comment = incidents.addComment(actor, incidentId, text);
         audit.record(new AuditRecord(actor.id(), AuditAction.COMMENT_ADDED, AuditEntityType.COMMENT, comment.id(),
                 incidentId, Map.of(), newCorrelationId()));
+        log.info("{} commented on incident {}", actor.name(), incidentId);
         return comment;
     }
 
@@ -253,6 +257,8 @@ public class IncidentManagementController {
         IncidentChange change = incidents.changeSeverity(actor, incidentId, severity);
         audit(actor, AuditAction.SEVERITY_CHANGED, incidentId, newCorrelationId(),
                 "from", change.before().severity().name(), "to", change.after().severity().name());
+        log.info("{} changed severity of incident {} from {} to {}", actor.name(), incidentId,
+                change.before().severity(), change.after().severity());
         return change.after();
     }
 
@@ -297,6 +303,8 @@ public class IncidentManagementController {
         IncidentView incident = change.after();
         notifications.notifyIncident(notice(incident, NotificationReason.INCIDENT_REASSIGNED, reason),
                 union(teamRecipients(targetTeamId), reporterRecipient(incident, actor)));
+        log.info("{} reassigned incident {} from team {} to {}", actor.name(), incidentId,
+                change.before().teamId(), targetTeamId);
         return incident;
     }
 
@@ -352,6 +360,7 @@ public class IncidentManagementController {
         audit.record(new AuditRecord(admin.id(), AuditAction.NOTIFICATION_REPLAYED, AuditEntityType.NOTIFICATION,
                 notification.id(), notification.incidentId(), Map.of("recipient", notification.recipientId().toString()),
                 newCorrelationId()));
+        log.info("{} replayed notification {}", admin.name(), notificationId);
         return notification;
     }
 
@@ -383,6 +392,9 @@ public class IncidentManagementController {
         IncidentView before = change.before();
         IncidentView after = change.after();
         UUID incidentId = after.id();
+        log.info("{} {} incident {}: {} -> {}, team {} -> {}", actor.name(),
+                action == AuditAction.ESCALATED ? "escalated" : "de-escalated", incidentId, before.severity(),
+                after.severity(), before.teamId(), after.teamId());
         audit(actor, action, incidentId, newCorrelationId(),
                 "fromSeverity", before.severity().name(), "toSeverity", after.severity().name(),
                 "fromTeam", before.teamId().toString(), "toTeam", after.teamId().toString(),
@@ -409,6 +421,7 @@ public class IncidentManagementController {
         IncidentStatus from = change.before().status();
         IncidentView incident = change.after();
         IncidentStatus to = incident.status();
+        log.info("{} moved incident {} from {} to {}", actor.name(), incident.id(), from, to);
         if (note == null || note.isBlank()) {
             audit(actor, AuditAction.STATUS_CHANGED, incident.id(), newCorrelationId(),
                     "from", from.name(), "to", to.name());

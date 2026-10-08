@@ -26,12 +26,18 @@ import org.example.organization.model.User;
 import org.example.organization.repository.CategoryRepository;
 import org.example.organization.repository.TeamRepository;
 import org.example.organization.repository.UserRepository;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.boot.context.event.ApplicationReadyEvent;
+import org.springframework.context.event.EventListener;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 @Service
 @Transactional(readOnly = true)
 public class OrganizationServiceImpl implements OrganizationService {
+
+    private static final Logger log = LoggerFactory.getLogger(OrganizationServiceImpl.class);
 
     private final UserRepository users;
     private final TeamRepository teams;
@@ -47,7 +53,10 @@ public class OrganizationServiceImpl implements OrganizationService {
     public Actor getActiveActor(UUID userId) {
         User user = users.findById(userId)
                 .filter(User::canAct)
-                .orElseThrow(() -> new UnauthenticatedException("User " + userId + " is unknown or inactive"));
+                .orElseThrow(() -> {
+                    log.warn("User {} is unknown, deactivated or the system user, so may not act", userId);
+                    return new UnauthenticatedException("User " + userId + " is unknown or inactive");
+                });
         return new Actor(user.getId(), user.getName(), user.getSystemRole(),
                 new HashSet<>(teams.findActiveTeamIdsOfUser(userId)));
     }
@@ -61,7 +70,29 @@ public class OrganizationServiceImpl implements OrganizationService {
         try {
             return Optional.of(UUID.fromString(value));
         } catch (IllegalArgumentException notAnId) {
-            return users.findByUsername(value.toLowerCase(Locale.ROOT)).map(User::getId);
+            Optional<UUID> id = users.findByUsername(value.toLowerCase(Locale.ROOT)).map(User::getId);
+            if (id.isEmpty()) {
+                log.debug("No user with username '{}'", value);
+            }
+            return id;
+        }
+    }
+
+    /**
+     * Says at startup who can use the system, and warns when nobody can (e.g. the {@code seed} profile was not used).
+     */
+    @EventListener(ApplicationReadyEvent.class)
+    public void logUsersWhoCanAct() {
+        List<String> names = users.findAll().stream()
+                .filter(User::canAct)
+                .map(user -> user.getUsername() != null ? user.getUsername() : user.getId().toString())
+                .sorted()
+                .toList();
+        if (names.isEmpty()) {
+            log.warn("No users can act: the database has no active users. For demo users (ada, alice, bob, carol, "
+                    + "dan, erin) start the app with the 'seed' profile (-Dspring.profiles.active=seed)");
+        } else {
+            log.info("{} user(s) can act: {}", names.size(), names);
         }
     }
 

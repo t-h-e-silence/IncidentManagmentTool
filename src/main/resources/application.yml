@@ -1,6 +1,11 @@
 server:
   port: ${PORT:8080}
 
+logging:
+  level:
+    # DEBUG shows how each request's X-User-Id was resolved; actions and errors are logged at INFO / WARN.
+    org.example.controller: DEBUG
+
 spring:
   application:
     name: incident-management
