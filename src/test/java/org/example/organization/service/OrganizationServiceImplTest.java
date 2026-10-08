@@ -30,6 +30,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.test.util.ReflectionTestUtils;
 
 @ExtendWith(MockitoExtension.class)
 class OrganizationServiceImplTest {
@@ -61,7 +62,7 @@ class OrganizationServiceImplTest {
     @Test
     void unknownDeactivatedOrSystemUserIsRejected() {
         User system = new User(UUID.randomUUID(), "System", "system@ims.invalid", SystemRole.SYSTEM);
-        dan.deactivate(Instant.now());
+        ReflectionTestUtils.setField(dan, "active", false);
         UUID unknown = UUID.randomUUID();
         when(users.findById(unknown)).thenReturn(Optional.empty());
         when(users.findById(dan.getId())).thenReturn(Optional.of(dan));
@@ -86,7 +87,7 @@ class OrganizationServiceImplTest {
     @Test
     void routingOfInactiveOrUnknownCategoryIsNotFound() {
         Category vpn = new Category(UUID.randomUUID(), "VPN", database.getId());
-        vpn.deactivate();
+        ReflectionTestUtils.setField(vpn, "active", false);
         when(categories.findById(vpn.toRouting().categoryId())).thenReturn(Optional.of(vpn));
 
         assertThatThrownBy(() -> service.getRouting(vpn.toRouting().categoryId())).isInstanceOf(NotFoundException.class);
@@ -96,7 +97,7 @@ class OrganizationServiceImplTest {
     @Test
     void membersAreActiveUsersOnlyByName() {
         database.addMember(dan.getId(), TeamRole.RESPONDER);
-        dan.deactivate(Instant.now());
+        ReflectionTestUtils.setField(dan, "active", false);
         when(teams.findById(database.getId())).thenReturn(Optional.of(database));
         when(users.findAllById(any())).thenReturn(List.of(alice, dan));
 
@@ -109,7 +110,7 @@ class OrganizationServiceImplTest {
     @Test
     void listsAllTeamsIncludingArchivedWithActiveMembers() {
         Team platform = new Team(UUID.randomUUID(), "Platform", dan.getId(), TeamRole.TEAM_LEAD);
-        platform.archive(Instant.now());
+        ReflectionTestUtils.setField(platform, "archivedAt", Instant.now());
         when(teams.findAllByOrderByName()).thenReturn(List.of(database, platform));
         when(users.findAllById(any())).thenReturn(List.of(alice, dan));
 
@@ -122,7 +123,7 @@ class OrganizationServiceImplTest {
 
     @Test
     void archivedOrUnknownTeamIsNotActive() {
-        database.archive(Instant.now());
+        ReflectionTestUtils.setField(database, "archivedAt", Instant.now());
         when(teams.findById(database.getId())).thenReturn(Optional.of(database));
 
         assertThatThrownBy(() -> service.requireActiveTeam(database.getId()))

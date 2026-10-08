@@ -18,7 +18,6 @@ import org.example.common.model.Recipient;
 import org.example.common.model.SystemRole;
 import org.example.organization.model.Category;
 import org.example.organization.model.CategoryRouting;
-import org.example.organization.model.CategoryView;
 import org.example.organization.model.Team;
 import org.example.organization.model.TeamMemberView;
 import org.example.organization.model.TeamView;
@@ -94,11 +93,6 @@ public class OrganizationServiceImpl implements OrganizationService {
         } else {
             log.info("{} user(s) can act: {}", names.size(), names);
         }
-    }
-
-    @Override
-    public List<CategoryView> listActiveCategories() {
-        return categories.findByActiveTrueOrderByName().stream().map(Category::toView).toList();
     }
 
     @Override

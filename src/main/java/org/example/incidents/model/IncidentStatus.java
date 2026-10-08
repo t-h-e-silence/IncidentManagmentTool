@@ -22,16 +22,12 @@ public enum IncidentStatus {
     CANCELLED;
 
     /**
-     * Statuses a team works on: shown in the team queue.
+     * Statuses a team works on.
      */
     public static final Set<IncidentStatus> ACTIVE = Set.of(OPEN, IN_PROGRESS, IN_REVIEW);
 
     public boolean isActive() {
         return ACTIVE.contains(this);
-    }
-
-    public boolean isFinal() {
-        return this == CLOSED || this == CANCELLED;
     }
 
     public boolean canMoveTo(IncidentStatus target) {

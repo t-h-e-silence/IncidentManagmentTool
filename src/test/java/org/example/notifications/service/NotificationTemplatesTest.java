@@ -34,16 +34,19 @@ class NotificationTemplatesTest {
     }
 
     @Test
-    void reassignedEmailContainsTheReason() {
-        IncidentNotice notice = notice(NotificationReason.INCIDENT_REASSIGNED, "network issue");
+    void cancelledEmailContainsTheReason() {
+        IncidentNotice notice = notice(NotificationReason.INCIDENT_CANCELLED, "duplicate");
 
-        assertThat(NotificationTemplates.subject(notice)).contains("handed over to Database");
-        assertThat(NotificationTemplates.body(notice)).contains("Reason: network issue");
+        assertThat(NotificationTemplates.subject(notice)).isEqualTo("[SEV2] Cancelled: DB down");
+        assertThat(NotificationTemplates.body(notice)).contains("Reason: duplicate");
     }
 
     @Test
-    void escalationEmailsAreNotRenderedHere() {
-        assertThatThrownBy(() -> NotificationTemplates.subject(notice(NotificationReason.INCIDENT_ESCALATED, null)))
-                .isInstanceOf(IllegalArgumentException.class);
+    void escalationAndRetiredEmailsAreNotRenderedHere() {
+        for (NotificationReason reason : new NotificationReason[]{NotificationReason.INCIDENT_ESCALATED,
+                NotificationReason.INCIDENT_DEESCALATED, NotificationReason.INCIDENT_REASSIGNED}) {
+            assertThatThrownBy(() -> NotificationTemplates.subject(notice(reason, null)))
+                    .as(reason.name()).isInstanceOf(IllegalArgumentException.class);
+        }
     }
 }

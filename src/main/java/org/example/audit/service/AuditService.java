@@ -21,8 +21,4 @@ public interface AuditService {
      */
     List<AuditEntryView> getIncidentTimeline(UUID incidentId);
 
-    /**
-     * Everything one user did, oldest first.
-     */
-    List<AuditEntryView> getActionsByUser(UUID userId);
 }

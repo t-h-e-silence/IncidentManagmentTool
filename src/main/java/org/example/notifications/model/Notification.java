@@ -115,23 +115,6 @@ public class Notification {
         }
     }
 
-    /**
-     * Manual replay of a dead-lettered notification; attempts start from zero.
-     */
-    public void replay(Instant now) {
-        if (status != NotificationStatus.DEAD_LETTERED) {
-            throw new BusinessRuleException("Only dead-lettered notifications can be replayed, status is " + status);
-        }
-        status = NotificationStatus.PENDING;
-        attempts = 0;
-        nextAttemptAt = now;
-    }
-
-    public NotificationView toView() {
-        return new NotificationView(id, incidentId, recipientId, recipientEmail, reason, subject, status, attempts,
-                nextAttemptAt, lastError, createdAt, sentAt);
-    }
-
     public UUID getId() {
         return id;
     }
@@ -154,6 +137,18 @@ public class Notification {
 
     public NotificationStatus getStatus() {
         return status;
+    }
+
+    public Instant getNextAttemptAt() {
+        return nextAttemptAt;
+    }
+
+    public String getLastError() {
+        return lastError;
+    }
+
+    public Instant getSentAt() {
+        return sentAt;
     }
 
     public int getAttempts() {

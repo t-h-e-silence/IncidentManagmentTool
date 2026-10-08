@@ -20,10 +20,6 @@ public record RetryPolicy(List<Duration> backoff) {
         }
     }
 
-    public int maxAttempts() {
-        return backoff.size() + 1;
-    }
-
     /**
      * @param attemptsMade attempts so far, including the one that just failed
      * @return delay before the next attempt, or empty when the email must be dead-lettered

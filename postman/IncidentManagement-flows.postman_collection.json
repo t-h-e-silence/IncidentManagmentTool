@@ -2,14 +2,14 @@
   "info": {
     "name": "Incident Management - flows",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
-    "description": "Two end-to-end flows; run each folder top to bottom with the Collection Runner (every request has tests). Start the app with the seed profile first (see README). Users are sent by username in X-User-Id ({{bob}} = bob); {{bobId}} etc. hold their ids for checks. Folders are independent and can be re-run: each creates its own incidents.\n\n1. Reporter (Bob, no team): report, follow and edit his incident; what a reporter may not do.\n2. Team member (Dan, Database team): queue, acknowledge, severity, escalate / de-escalate, review, resolve, reopen, close, hand-over, reassign, cancel."
+    "description": "Two end-to-end flows with tests; run each folder top to bottom in the Collection Runner (or newman). Start the app with the seed profile (see README). The caller is the X-User-Id header: a username (ada, alice, bob, carol, dan, erin) or a user id. {{bob}} = bob; {{bobId}} etc. hold the ids. Folders are independent and re-runnable.\n\n1. Reporter (bob, no team).\n2. Team member (dan, Database team)."
   },
   "item": [
     {
-      "name": "1. Reporter flow (Bob)",
+      "name": "1. Reporter flow (bob)",
       "item": [
         {
-          "name": "List categories",
+          "name": "List teams",
           "request": {
             "method": "GET",
             "header": [
@@ -19,12 +19,12 @@
               }
             ],
             "url": {
-              "raw": "{{baseUrl}}/categories",
+              "raw": "{{baseUrl}}/teams",
               "host": [
                 "{{baseUrl}}"
               ],
               "path": [
-                "categories"
+                "teams"
               ]
             }
           },
@@ -36,14 +36,14 @@
                 "exec": [
                   "pm.test('status 200', () => pm.response.to.have.status(200));",
                   "const body = pm.response.json();",
-                  "pm.test('Database category is offered', () => pm.expect(body.map(c => c.id)).to.include(pm.collectionVariables.get('categoryDatabase')));"
+                  "pm.test('Database team is there', () => pm.expect(body.map(t => t.name)).to.include('Database'));"
                 ]
               }
             }
           ]
         },
         {
-          "name": "Report an incident (SEV2, Database category)",
+          "name": "Create an incident (SEV2, Database category)",
           "request": {
             "method": "POST",
             "header": [
@@ -79,11 +79,8 @@
                 "exec": [
                   "pm.test('status 201', () => pm.response.to.have.status(201));",
                   "const body = pm.response.json();",
-                  "pm.test('OPEN, routed to the Database team, reported by Bob', () => {",
-                  "  pm.expect(body.status).to.eql('OPEN');",
-                  "  pm.expect(body.teamId).to.eql(pm.collectionVariables.get('teamDatabase'));",
-                  "  pm.expect(body.reporterId).to.eql(pm.collectionVariables.get('bobId'));",
-                  "});",
+                  "pm.test('status is OPEN', () => pm.expect(body.status).to.eql('OPEN'));",
+                  "pm.test('owned by Database, reported by Bob', () => { pm.expect(body.teamId).to.eql(pm.collectionVariables.get('teamDatabase')); pm.expect(body.reporterId).to.eql(pm.collectionVariables.get('bobId')); });",
                   "pm.collectionVariables.set('reporterIncidentId', body.id);"
                 ]
               }
@@ -171,7 +168,7 @@
           ]
         },
         {
-          "name": "My reported incidents",
+          "name": "My incidents (by user)",
           "request": {
             "method": "GET",
             "header": [
@@ -181,13 +178,14 @@
               }
             ],
             "url": {
-              "raw": "{{baseUrl}}/incidents/mine",
+              "raw": "{{baseUrl}}/users/{{bob}}/incidents",
               "host": [
                 "{{baseUrl}}"
               ],
               "path": [
-                "incidents",
-                "mine"
+                "users",
+                "{{bob}}",
+                "incidents"
               ]
             }
           },
@@ -268,14 +266,14 @@
                 "exec": [
                   "pm.test('status 200', () => pm.response.to.have.status(200));",
                   "const body = pm.response.json();",
-                  "pm.test('still OPEN', () => pm.expect(body.status).to.eql('OPEN'));"
+                  "pm.test('status is OPEN', () => pm.expect(body.status).to.eql('OPEN'));"
                 ]
               }
             }
           ]
         },
         {
-          "name": "Correct the title and description",
+          "name": "Correct the name and description",
           "request": {
             "method": "PATCH",
             "header": [
@@ -311,7 +309,7 @@
                 "exec": [
                   "pm.test('status 200', () => pm.response.to.have.status(200));",
                   "const body = pm.response.json();",
-                  "pm.test('title changed', () => pm.expect(body.title).to.eql('Checkout and login are slow'));"
+                  "pm.test('name changed', () => pm.expect(body.title).to.eql('Checkout and login are slow'));"
                 ]
               }
             }
@@ -362,7 +360,7 @@
           ]
         },
         {
-          "name": "Timeline shows my actions",
+          "name": "History shows my actions",
           "request": {
             "method": "GET",
             "header": [
@@ -372,14 +370,14 @@
               }
             ],
             "url": {
-              "raw": "{{baseUrl}}/incidents/{{reporterIncidentId}}/timeline",
+              "raw": "{{baseUrl}}/incidents/{{reporterIncidentId}}/history",
               "host": [
                 "{{baseUrl}}"
               ],
               "path": [
                 "incidents",
                 "{{reporterIncidentId}}",
-                "timeline"
+                "history"
               ]
             }
           },
@@ -391,80 +389,7 @@
                 "exec": [
                   "pm.test('status 200', () => pm.response.to.have.status(200));",
                   "const body = pm.response.json();",
-                  "pm.test('timeline has INCIDENT_CREATED, DETAILS_UPDATED, COMMENT_ADDED', () => { const a = body.map(e => e.action); [\"INCIDENT_CREATED\", \"DETAILS_UPDATED\", \"COMMENT_ADDED\"].forEach(x => pm.expect(a).to.include(x)); });"
-                ]
-              }
-            }
-          ]
-        },
-        {
-          "name": "The Database team was emailed",
-          "request": {
-            "method": "GET",
-            "header": [
-              {
-                "key": "X-User-Id",
-                "value": "{{bob}}"
-              }
-            ],
-            "url": {
-              "raw": "{{baseUrl}}/incidents/{{reporterIncidentId}}/notifications",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "incidents",
-                "{{reporterIncidentId}}",
-                "notifications"
-              ]
-            }
-          },
-          "event": [
-            {
-              "listen": "test",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "pm.test('status 200', () => pm.response.to.have.status(200));",
-                  "const body = pm.response.json();",
-                  "pm.test('Alice and Dan got INCIDENT_CREATED', () => {",
-                  "  const created = body.filter(n => n.reason === 'INCIDENT_CREATED').map(n => n.recipientId);",
-                  "  pm.expect(created).to.include.members([pm.collectionVariables.get('aliceId'), pm.collectionVariables.get('danId')]);",
-                  "});"
-                ]
-              }
-            }
-          ]
-        },
-        {
-          "name": "A reporter may not acknowledge (403)",
-          "request": {
-            "method": "POST",
-            "header": [
-              {
-                "key": "X-User-Id",
-                "value": "{{bob}}"
-              }
-            ],
-            "url": {
-              "raw": "{{baseUrl}}/incidents/{{reporterIncidentId}}/acknowledge",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "incidents",
-                "{{reporterIncidentId}}",
-                "acknowledge"
-              ]
-            }
-          },
-          "event": [
-            {
-              "listen": "test",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "pm.test('status 403', () => pm.response.to.have.status(403));"
+                  "pm.test('history has INCIDENT_CREATED, DETAILS_UPDATED, COMMENT_ADDED', () => { const a = body.map(e => e.action); [\"INCIDENT_CREATED\", \"DETAILS_UPDATED\", \"COMMENT_ADDED\"].forEach(x => pm.expect(a).to.include(x)); });"
                 ]
               }
             }
@@ -473,7 +398,7 @@
         {
           "name": "A reporter may not change the status (403)",
           "request": {
-            "method": "PUT",
+            "method": "PATCH",
             "header": [
               {
                 "key": "X-User-Id",
@@ -485,19 +410,18 @@
               }
             ],
             "url": {
-              "raw": "{{baseUrl}}/incidents/{{reporterIncidentId}}/status",
+              "raw": "{{baseUrl}}/incidents/{{reporterIncidentId}}",
               "host": [
                 "{{baseUrl}}"
               ],
               "path": [
                 "incidents",
-                "{{reporterIncidentId}}",
-                "status"
+                "{{reporterIncidentId}}"
               ]
             },
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"status\": \"CANCELLED\",\n  \"note\": \"never mind\"\n}"
+              "raw": "{\n  \"status\": \"CANCELLED\",\n  \"reason\": \"never mind\"\n}"
             }
           },
           "event": [
@@ -515,7 +439,7 @@
         {
           "name": "A reporter may not escalate (403)",
           "request": {
-            "method": "POST",
+            "method": "PATCH",
             "header": [
               {
                 "key": "X-User-Id",
@@ -527,14 +451,13 @@
               }
             ],
             "url": {
-              "raw": "{{baseUrl}}/incidents/{{reporterIncidentId}}/escalate",
+              "raw": "{{baseUrl}}/incidents/{{reporterIncidentId}}",
               "host": [
                 "{{baseUrl}}"
               ],
               "path": [
                 "incidents",
-                "{{reporterIncidentId}}",
-                "escalate"
+                "{{reporterIncidentId}}"
               ]
             },
             "body": {
@@ -555,9 +478,9 @@
           ]
         },
         {
-          "name": "A reporter may not change severity (403)",
+          "name": "Nothing to update (400)",
           "request": {
-            "method": "PUT",
+            "method": "PATCH",
             "header": [
               {
                 "key": "X-User-Id",
@@ -569,19 +492,18 @@
               }
             ],
             "url": {
-              "raw": "{{baseUrl}}/incidents/{{reporterIncidentId}}/severity",
+              "raw": "{{baseUrl}}/incidents/{{reporterIncidentId}}",
               "host": [
                 "{{baseUrl}}"
               ],
               "path": [
                 "incidents",
-                "{{reporterIncidentId}}",
-                "severity"
+                "{{reporterIncidentId}}"
               ]
             },
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"severity\": \"SEV3\"\n}"
+              "raw": "{}"
             }
           },
           "event": [
@@ -590,41 +512,7 @@
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "pm.test('status 403', () => pm.response.to.have.status(403));"
-                ]
-              }
-            }
-          ]
-        },
-        {
-          "name": "A reporter may not use admin functions (403)",
-          "request": {
-            "method": "GET",
-            "header": [
-              {
-                "key": "X-User-Id",
-                "value": "{{bob}}"
-              }
-            ],
-            "url": {
-              "raw": "{{baseUrl}}/admin/notifications/dead-lettered",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "admin",
-                "notifications",
-                "dead-lettered"
-              ]
-            }
-          },
-          "event": [
-            {
-              "listen": "test",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "pm.test('status 403', () => pm.response.to.have.status(403));"
+                  "pm.test('status 400', () => pm.response.to.have.status(400));"
                 ]
               }
             }
@@ -682,13 +570,12 @@
               }
             ],
             "url": {
-              "raw": "{{baseUrl}}/incidents/mine",
+              "raw": "{{baseUrl}}/incidents",
               "host": [
                 "{{baseUrl}}"
               ],
               "path": [
-                "incidents",
-                "mine"
+                "incidents"
               ]
             }
           },
@@ -705,10 +592,10 @@
           ]
         }
       ],
-      "description": "Bob is a USER without a team. Reports to the Database category, so the Database team (Alice, Dan) owns the incident."
+      "description": "Bob has no team; his Database-category incident is owned by the Database team (alice, dan)."
     },
     {
-      "name": "2. Team member flow (Dan, Database team)",
+      "name": "2. Team member flow (dan, Database team)",
       "item": [
         {
           "name": "Setup: Bob reports an incident",
@@ -737,7 +624,7 @@
               "mode": "raw",
               "raw": "{\n  \"title\": \"Replica lag on db-02\",\n  \"description\": \"found by Bob\",\n  \"categoryId\": \"{{categoryDatabase}}\",\n  \"severity\": \"SEV2\"\n}"
             },
-            "description": "Setup step: Bob (reporter) creates the incident this part of the flow works on."
+            "description": "Setup: Bob reports the incident this part of the flow works on."
           },
           "event": [
             {
@@ -747,7 +634,8 @@
                 "exec": [
                   "pm.test('status 201', () => pm.response.to.have.status(201));",
                   "const body = pm.response.json();",
-                  "pm.test('OPEN, owned by Database', () => { pm.expect(body.status).to.eql('OPEN'); pm.expect(body.teamId).to.eql(pm.collectionVariables.get('teamDatabase')); });",
+                  "pm.test('status is OPEN', () => pm.expect(body.status).to.eql('OPEN'));",
+                  "pm.test('owned by Database', () => pm.expect(body.teamId).to.eql(pm.collectionVariables.get('teamDatabase')));",
                   "pm.collectionVariables.set('teamIncidentId', body.id);"
                 ]
               }
@@ -755,7 +643,7 @@
           ]
         },
         {
-          "name": "My team (Database)",
+          "name": "Teams: Dan is in Database",
           "request": {
             "method": "GET",
             "header": [
@@ -765,13 +653,12 @@
               }
             ],
             "url": {
-              "raw": "{{baseUrl}}/teams/{{teamDatabase}}",
+              "raw": "{{baseUrl}}/teams",
               "host": [
                 "{{baseUrl}}"
               ],
               "path": [
-                "teams",
-                "{{teamDatabase}}"
+                "teams"
               ]
             }
           },
@@ -783,14 +670,14 @@
                 "exec": [
                   "pm.test('status 200', () => pm.response.to.have.status(200));",
                   "const body = pm.response.json();",
-                  "pm.test('Dan is a member', () => pm.expect(body.members.map(m => m.userId)).to.include(pm.collectionVariables.get('danId')));"
+                  "pm.test('Dan is a member of Database', () => pm.expect(body.find(t => t.name === 'Database').members.map(m => m.userId)).to.include(pm.collectionVariables.get('danId')));"
                 ]
               }
             }
           ]
         },
         {
-          "name": "Team queue has the new incident",
+          "name": "Team incidents include it",
           "request": {
             "method": "GET",
             "header": [
@@ -800,14 +687,14 @@
               }
             ],
             "url": {
-              "raw": "{{baseUrl}}/teams/{{teamDatabase}}/queue",
+              "raw": "{{baseUrl}}/teams/{{teamDatabase}}/incidents",
               "host": [
                 "{{baseUrl}}"
               ],
               "path": [
                 "teams",
                 "{{teamDatabase}}",
-                "queue"
+                "incidents"
               ]
             }
           },
@@ -819,7 +706,7 @@
                 "exec": [
                   "pm.test('status 200', () => pm.response.to.have.status(200));",
                   "const body = pm.response.json();",
-                  "pm.test('in the queue', () => pm.expect(body.map(i => i.id)).to.include(pm.collectionVariables.get('teamIncidentId')));"
+                  "pm.test('listed', () => pm.expect(body.map(i => i.id)).to.include(pm.collectionVariables.get('teamIncidentId')));"
                 ]
               }
             }
@@ -828,23 +715,30 @@
         {
           "name": "Acknowledge (OPEN -> IN_PROGRESS)",
           "request": {
-            "method": "POST",
+            "method": "PATCH",
             "header": [
               {
                 "key": "X-User-Id",
                 "value": "{{dan}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
               }
             ],
             "url": {
-              "raw": "{{baseUrl}}/incidents/{{teamIncidentId}}/acknowledge",
+              "raw": "{{baseUrl}}/incidents/{{teamIncidentId}}",
               "host": [
                 "{{baseUrl}}"
               ],
               "path": [
                 "incidents",
-                "{{teamIncidentId}}",
-                "acknowledge"
+                "{{teamIncidentId}}"
               ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"status\": \"IN_PROGRESS\"\n}"
             }
           },
           "event": [
@@ -855,7 +749,8 @@
                 "exec": [
                   "pm.test('status 200', () => pm.response.to.have.status(200));",
                   "const body = pm.response.json();",
-                  "pm.test('IN_PROGRESS, acknowledged', () => { pm.expect(body.status).to.eql('IN_PROGRESS'); pm.expect(body.acknowledgedAt).to.be.a('string'); });"
+                  "pm.test('status is IN_PROGRESS', () => pm.expect(body.status).to.eql('IN_PROGRESS'));",
+                  "pm.test('acknowledged', () => pm.expect(body.acknowledgedAt).to.be.a('string'));"
                 ]
               }
             }
@@ -864,23 +759,30 @@
         {
           "name": "Acknowledging twice is refused (409)",
           "request": {
-            "method": "POST",
+            "method": "PATCH",
             "header": [
               {
                 "key": "X-User-Id",
                 "value": "{{dan}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
               }
             ],
             "url": {
-              "raw": "{{baseUrl}}/incidents/{{teamIncidentId}}/acknowledge",
+              "raw": "{{baseUrl}}/incidents/{{teamIncidentId}}",
               "host": [
                 "{{baseUrl}}"
               ],
               "path": [
                 "incidents",
-                "{{teamIncidentId}}",
-                "acknowledge"
+                "{{teamIncidentId}}"
               ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"status\": \"IN_PROGRESS\"\n}"
             }
           },
           "event": [
@@ -981,9 +883,9 @@
           ]
         },
         {
-          "name": "Correct severity SEV2 -> SEV3 (no emails)",
+          "name": "Escalate SEV2 -> SEV1 (emails)",
           "request": {
-            "method": "PUT",
+            "method": "PATCH",
             "header": [
               {
                 "key": "X-User-Id",
@@ -995,58 +897,13 @@
               }
             ],
             "url": {
-              "raw": "{{baseUrl}}/incidents/{{teamIncidentId}}/severity",
+              "raw": "{{baseUrl}}/incidents/{{teamIncidentId}}",
               "host": [
                 "{{baseUrl}}"
               ],
               "path": [
                 "incidents",
-                "{{teamIncidentId}}",
-                "severity"
-              ]
-            },
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"severity\": \"SEV3\"\n}"
-            }
-          },
-          "event": [
-            {
-              "listen": "test",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "pm.test('status 200', () => pm.response.to.have.status(200));",
-                  "const body = pm.response.json();",
-                  "pm.test('SEV3', () => pm.expect(body.severity).to.eql('SEV3'));"
-                ]
-              }
-            }
-          ]
-        },
-        {
-          "name": "Escalate SEV3 -> SEV1 within the team",
-          "request": {
-            "method": "POST",
-            "header": [
-              {
-                "key": "X-User-Id",
-                "value": "{{dan}}"
-              },
-              {
-                "key": "Content-Type",
-                "value": "application/json"
-              }
-            ],
-            "url": {
-              "raw": "{{baseUrl}}/incidents/{{teamIncidentId}}/escalate",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "incidents",
-                "{{teamIncidentId}}",
-                "escalate"
+                "{{teamIncidentId}}"
               ]
             },
             "body": {
@@ -1069,9 +926,9 @@
           ]
         },
         {
-          "name": "Escalation must raise severity (409)",
+          "name": "Same severity is refused (409)",
           "request": {
-            "method": "POST",
+            "method": "PATCH",
             "header": [
               {
                 "key": "X-User-Id",
@@ -1083,14 +940,13 @@
               }
             ],
             "url": {
-              "raw": "{{baseUrl}}/incidents/{{teamIncidentId}}/escalate",
+              "raw": "{{baseUrl}}/incidents/{{teamIncidentId}}",
               "host": [
                 "{{baseUrl}}"
               ],
               "path": [
                 "incidents",
-                "{{teamIncidentId}}",
-                "escalate"
+                "{{teamIncidentId}}"
               ]
             },
             "body": {
@@ -1111,9 +967,9 @@
           ]
         },
         {
-          "name": "Escalation needs a reason (400)",
+          "name": "Severity needs a reason (400)",
           "request": {
-            "method": "POST",
+            "method": "PATCH",
             "header": [
               {
                 "key": "X-User-Id",
@@ -1125,19 +981,18 @@
               }
             ],
             "url": {
-              "raw": "{{baseUrl}}/incidents/{{teamIncidentId}}/escalate",
+              "raw": "{{baseUrl}}/incidents/{{teamIncidentId}}",
               "host": [
                 "{{baseUrl}}"
               ],
               "path": [
                 "incidents",
-                "{{teamIncidentId}}",
-                "escalate"
+                "{{teamIncidentId}}"
               ]
             },
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"severity\": \"SEV1\",\n  \"reason\": \" \"\n}"
+              "raw": "{\n  \"severity\": \"SEV2\"\n}"
             }
           },
           "event": [
@@ -1153,9 +1008,9 @@
           ]
         },
         {
-          "name": "De-escalate SEV1 -> SEV2",
+          "name": "De-escalate SEV1 -> SEV2 (emails)",
           "request": {
-            "method": "POST",
+            "method": "PATCH",
             "header": [
               {
                 "key": "X-User-Id",
@@ -1167,19 +1022,18 @@
               }
             ],
             "url": {
-              "raw": "{{baseUrl}}/incidents/{{teamIncidentId}}/de-escalate",
+              "raw": "{{baseUrl}}/incidents/{{teamIncidentId}}",
               "host": [
                 "{{baseUrl}}"
               ],
               "path": [
                 "incidents",
-                "{{teamIncidentId}}",
-                "de-escalate"
+                "{{teamIncidentId}}"
               ]
             },
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"severity\": \"SEV2\",\n  \"reason\": \"failover done, lag shrinking\"\n}"
+              "raw": "{\n  \"severity\": \"SEV2\",\n  \"reason\": \"failover done\"\n}"
             }
           },
           "event": [
@@ -1197,9 +1051,9 @@
           ]
         },
         {
-          "name": "Resolve without review is refused (409)",
+          "name": "De-escalation cannot hand over (409)",
           "request": {
-            "method": "POST",
+            "method": "PATCH",
             "header": [
               {
                 "key": "X-User-Id",
@@ -1211,19 +1065,59 @@
               }
             ],
             "url": {
-              "raw": "{{baseUrl}}/incidents/{{teamIncidentId}}/resolve",
+              "raw": "{{baseUrl}}/incidents/{{teamIncidentId}}",
               "host": [
                 "{{baseUrl}}"
               ],
               "path": [
                 "incidents",
-                "{{teamIncidentId}}",
-                "resolve"
+                "{{teamIncidentId}}"
               ]
             },
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"note\": \"fixed\"\n}"
+              "raw": "{\n  \"severity\": \"SEV3\",\n  \"targetTeamId\": \"{{teamPlatform}}\",\n  \"reason\": \"not ours\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 409', () => pm.response.to.have.status(409));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Resolve without review is refused (409)",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "X-User-Id",
+                "value": "{{dan}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/incidents/{{teamIncidentId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "incidents",
+                "{{teamIncidentId}}"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"status\": \"RESOLVED\",\n  \"reason\": \"fixed\"\n}"
             }
           },
           "event": [
@@ -1241,7 +1135,7 @@
         {
           "name": "Submit for review (-> IN_REVIEW)",
           "request": {
-            "method": "PUT",
+            "method": "PATCH",
             "header": [
               {
                 "key": "X-User-Id",
@@ -1253,14 +1147,13 @@
               }
             ],
             "url": {
-              "raw": "{{baseUrl}}/incidents/{{teamIncidentId}}/status",
+              "raw": "{{baseUrl}}/incidents/{{teamIncidentId}}",
               "host": [
                 "{{baseUrl}}"
               ],
               "path": [
                 "incidents",
-                "{{teamIncidentId}}",
-                "status"
+                "{{teamIncidentId}}"
               ]
             },
             "body": {
@@ -1276,7 +1169,7 @@
                 "exec": [
                   "pm.test('status 200', () => pm.response.to.have.status(200));",
                   "const body = pm.response.json();",
-                  "pm.test('now IN_REVIEW', () => pm.expect(body.status).to.eql('IN_REVIEW'));"
+                  "pm.test('status is IN_REVIEW', () => pm.expect(body.status).to.eql('IN_REVIEW'));"
                 ]
               }
             }
@@ -1285,7 +1178,7 @@
         {
           "name": "Review sends it back to work (-> IN_PROGRESS)",
           "request": {
-            "method": "PUT",
+            "method": "PATCH",
             "header": [
               {
                 "key": "X-User-Id",
@@ -1297,14 +1190,13 @@
               }
             ],
             "url": {
-              "raw": "{{baseUrl}}/incidents/{{teamIncidentId}}/status",
+              "raw": "{{baseUrl}}/incidents/{{teamIncidentId}}",
               "host": [
                 "{{baseUrl}}"
               ],
               "path": [
                 "incidents",
-                "{{teamIncidentId}}",
-                "status"
+                "{{teamIncidentId}}"
               ]
             },
             "body": {
@@ -1320,16 +1212,16 @@
                 "exec": [
                   "pm.test('status 200', () => pm.response.to.have.status(200));",
                   "const body = pm.response.json();",
-                  "pm.test('now IN_PROGRESS', () => pm.expect(body.status).to.eql('IN_PROGRESS'));"
+                  "pm.test('status is IN_PROGRESS', () => pm.expect(body.status).to.eql('IN_PROGRESS'));"
                 ]
               }
             }
           ]
         },
         {
-          "name": "Submit for review again (-> IN_REVIEW)",
+          "name": "Submit for review again",
           "request": {
-            "method": "PUT",
+            "method": "PATCH",
             "header": [
               {
                 "key": "X-User-Id",
@@ -1341,14 +1233,13 @@
               }
             ],
             "url": {
-              "raw": "{{baseUrl}}/incidents/{{teamIncidentId}}/status",
+              "raw": "{{baseUrl}}/incidents/{{teamIncidentId}}",
               "host": [
                 "{{baseUrl}}"
               ],
               "path": [
                 "incidents",
-                "{{teamIncidentId}}",
-                "status"
+                "{{teamIncidentId}}"
               ]
             },
             "body": {
@@ -1364,16 +1255,16 @@
                 "exec": [
                   "pm.test('status 200', () => pm.response.to.have.status(200));",
                   "const body = pm.response.json();",
-                  "pm.test('now IN_REVIEW', () => pm.expect(body.status).to.eql('IN_REVIEW'));"
+                  "pm.test('status is IN_REVIEW', () => pm.expect(body.status).to.eql('IN_REVIEW'));"
                 ]
               }
             }
           ]
         },
         {
-          "name": "Resolve with a note (-> RESOLVED)",
+          "name": "Resolve with a reason (-> RESOLVED)",
           "request": {
-            "method": "POST",
+            "method": "PATCH",
             "header": [
               {
                 "key": "X-User-Id",
@@ -1385,19 +1276,18 @@
               }
             ],
             "url": {
-              "raw": "{{baseUrl}}/incidents/{{teamIncidentId}}/resolve",
+              "raw": "{{baseUrl}}/incidents/{{teamIncidentId}}",
               "host": [
                 "{{baseUrl}}"
               ],
               "path": [
                 "incidents",
-                "{{teamIncidentId}}",
-                "resolve"
+                "{{teamIncidentId}}"
               ]
             },
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"note\": \"replication slot dropped, lag 0\"\n}"
+              "raw": "{\n  \"status\": \"RESOLVED\",\n  \"reason\": \"replication slot dropped\"\n}"
             }
           },
           "event": [
@@ -1408,7 +1298,8 @@
                 "exec": [
                   "pm.test('status 200', () => pm.response.to.have.status(200));",
                   "const body = pm.response.json();",
-                  "pm.test('RESOLVED with note', () => { pm.expect(body.status).to.eql('RESOLVED'); pm.expect(body.resolutionNote).to.eql('replication slot dropped, lag 0'); });"
+                  "pm.test('status is RESOLVED', () => pm.expect(body.status).to.eql('RESOLVED'));",
+                  "pm.test('resolution note kept', () => pm.expect(body.resolutionNote).to.eql('replication slot dropped'));"
                 ]
               }
             }
@@ -1459,7 +1350,7 @@
         {
           "name": "Reopen needs a reason (400)",
           "request": {
-            "method": "PUT",
+            "method": "PATCH",
             "header": [
               {
                 "key": "X-User-Id",
@@ -1471,14 +1362,13 @@
               }
             ],
             "url": {
-              "raw": "{{baseUrl}}/incidents/{{teamIncidentId}}/status",
+              "raw": "{{baseUrl}}/incidents/{{teamIncidentId}}",
               "host": [
                 "{{baseUrl}}"
               ],
               "path": [
                 "incidents",
-                "{{teamIncidentId}}",
-                "status"
+                "{{teamIncidentId}}"
               ]
             },
             "body": {
@@ -1501,7 +1391,7 @@
         {
           "name": "Reopen (RESOLVED -> IN_PROGRESS)",
           "request": {
-            "method": "PUT",
+            "method": "PATCH",
             "header": [
               {
                 "key": "X-User-Id",
@@ -1513,19 +1403,18 @@
               }
             ],
             "url": {
-              "raw": "{{baseUrl}}/incidents/{{teamIncidentId}}/status",
+              "raw": "{{baseUrl}}/incidents/{{teamIncidentId}}",
               "host": [
                 "{{baseUrl}}"
               ],
               "path": [
                 "incidents",
-                "{{teamIncidentId}}",
-                "status"
+                "{{teamIncidentId}}"
               ]
             },
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"status\": \"IN_PROGRESS\",\n  \"note\": \"lag is back\"\n}"
+              "raw": "{\n  \"status\": \"IN_PROGRESS\",\n  \"reason\": \"lag is back\"\n}"
             }
           },
           "event": [
@@ -1536,16 +1425,17 @@
                 "exec": [
                   "pm.test('status 200', () => pm.response.to.have.status(200));",
                   "const body = pm.response.json();",
-                  "pm.test('IN_PROGRESS, resolution cleared', () => { pm.expect(body.status).to.eql('IN_PROGRESS'); pm.expect(body.resolutionNote).to.be.null; });"
+                  "pm.test('status is IN_PROGRESS', () => pm.expect(body.status).to.eql('IN_PROGRESS'));",
+                  "pm.test('resolution cleared', () => pm.expect(body.resolutionNote).to.be.null);"
                 ]
               }
             }
           ]
         },
         {
-          "name": "Submit for review (-> IN_REVIEW)",
+          "name": "Review again",
           "request": {
-            "method": "PUT",
+            "method": "PATCH",
             "header": [
               {
                 "key": "X-User-Id",
@@ -1557,14 +1447,13 @@
               }
             ],
             "url": {
-              "raw": "{{baseUrl}}/incidents/{{teamIncidentId}}/status",
+              "raw": "{{baseUrl}}/incidents/{{teamIncidentId}}",
               "host": [
                 "{{baseUrl}}"
               ],
               "path": [
                 "incidents",
-                "{{teamIncidentId}}",
-                "status"
+                "{{teamIncidentId}}"
               ]
             },
             "body": {
@@ -1580,16 +1469,16 @@
                 "exec": [
                   "pm.test('status 200', () => pm.response.to.have.status(200));",
                   "const body = pm.response.json();",
-                  "pm.test('now IN_REVIEW', () => pm.expect(body.status).to.eql('IN_REVIEW'));"
+                  "pm.test('status is IN_REVIEW', () => pm.expect(body.status).to.eql('IN_REVIEW'));"
                 ]
               }
             }
           ]
         },
         {
-          "name": "Resolve again (-> RESOLVED)",
+          "name": "Resolve again",
           "request": {
-            "method": "POST",
+            "method": "PATCH",
             "header": [
               {
                 "key": "X-User-Id",
@@ -1601,19 +1490,18 @@
               }
             ],
             "url": {
-              "raw": "{{baseUrl}}/incidents/{{teamIncidentId}}/resolve",
+              "raw": "{{baseUrl}}/incidents/{{teamIncidentId}}",
               "host": [
                 "{{baseUrl}}"
               ],
               "path": [
                 "incidents",
-                "{{teamIncidentId}}",
-                "resolve"
+                "{{teamIncidentId}}"
               ]
             },
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"note\": \"slot monitoring added\"\n}"
+              "raw": "{\n  \"status\": \"RESOLVED\",\n  \"reason\": \"slot monitoring added\"\n}"
             }
           },
           "event": [
@@ -1624,7 +1512,7 @@
                 "exec": [
                   "pm.test('status 200', () => pm.response.to.have.status(200));",
                   "const body = pm.response.json();",
-                  "pm.test('RESOLVED', () => pm.expect(body.status).to.eql('RESOLVED'));"
+                  "pm.test('status is RESOLVED', () => pm.expect(body.status).to.eql('RESOLVED'));"
                 ]
               }
             }
@@ -1633,7 +1521,7 @@
         {
           "name": "Close (RESOLVED -> CLOSED)",
           "request": {
-            "method": "PUT",
+            "method": "PATCH",
             "header": [
               {
                 "key": "X-User-Id",
@@ -1645,14 +1533,13 @@
               }
             ],
             "url": {
-              "raw": "{{baseUrl}}/incidents/{{teamIncidentId}}/status",
+              "raw": "{{baseUrl}}/incidents/{{teamIncidentId}}",
               "host": [
                 "{{baseUrl}}"
               ],
               "path": [
                 "incidents",
-                "{{teamIncidentId}}",
-                "status"
+                "{{teamIncidentId}}"
               ]
             },
             "body": {
@@ -1668,7 +1555,8 @@
                 "exec": [
                   "pm.test('status 200', () => pm.response.to.have.status(200));",
                   "const body = pm.response.json();",
-                  "pm.test('CLOSED', () => { pm.expect(body.status).to.eql('CLOSED'); pm.expect(body.closedAt).to.be.a('string'); });"
+                  "pm.test('status is CLOSED', () => pm.expect(body.status).to.eql('CLOSED'));",
+                  "pm.test('closedAt set', () => pm.expect(body.closedAt).to.be.a('string'));"
                 ]
               }
             }
@@ -1677,7 +1565,7 @@
         {
           "name": "CLOSED is final (409)",
           "request": {
-            "method": "PUT",
+            "method": "PATCH",
             "header": [
               {
                 "key": "X-User-Id",
@@ -1689,19 +1577,18 @@
               }
             ],
             "url": {
-              "raw": "{{baseUrl}}/incidents/{{teamIncidentId}}/status",
+              "raw": "{{baseUrl}}/incidents/{{teamIncidentId}}",
               "host": [
                 "{{baseUrl}}"
               ],
               "path": [
                 "incidents",
-                "{{teamIncidentId}}",
-                "status"
+                "{{teamIncidentId}}"
               ]
             },
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"status\": \"IN_PROGRESS\",\n  \"note\": \"once more\"\n}"
+              "raw": "{\n  \"status\": \"IN_PROGRESS\",\n  \"reason\": \"once more\"\n}"
             }
           },
           "event": [
@@ -1717,43 +1604,7 @@
           ]
         },
         {
-          "name": "Queue no longer has it",
-          "request": {
-            "method": "GET",
-            "header": [
-              {
-                "key": "X-User-Id",
-                "value": "{{dan}}"
-              }
-            ],
-            "url": {
-              "raw": "{{baseUrl}}/teams/{{teamDatabase}}/queue",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "teams",
-                "{{teamDatabase}}",
-                "queue"
-              ]
-            }
-          },
-          "event": [
-            {
-              "listen": "test",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "pm.test('status 200', () => pm.response.to.have.status(200));",
-                  "const body = pm.response.json();",
-                  "pm.test('not in the queue', () => pm.expect(body.map(i => i.id)).to.not.include(pm.collectionVariables.get('teamIncidentId')));"
-                ]
-              }
-            }
-          ]
-        },
-        {
-          "name": "Team incidents still list it as CLOSED",
+          "name": "Team incidents list it as CLOSED",
           "request": {
             "method": "GET",
             "header": [
@@ -1782,14 +1633,14 @@
                 "exec": [
                   "pm.test('status 200', () => pm.response.to.have.status(200));",
                   "const body = pm.response.json();",
-                  "pm.test('listed as CLOSED', () => pm.expect(body.find(i => i.id === pm.collectionVariables.get('teamIncidentId')).status).to.eql('CLOSED'));"
+                  "pm.test('CLOSED', () => pm.expect(body.find(i => i.id === pm.collectionVariables.get('teamIncidentId')).status).to.eql('CLOSED'));"
                 ]
               }
             }
           ]
         },
         {
-          "name": "Escalation history: up, then down",
+          "name": "History has every step",
           "request": {
             "method": "GET",
             "header": [
@@ -1799,14 +1650,14 @@
               }
             ],
             "url": {
-              "raw": "{{baseUrl}}/incidents/{{teamIncidentId}}/escalations",
+              "raw": "{{baseUrl}}/incidents/{{teamIncidentId}}/history",
               "host": [
                 "{{baseUrl}}"
               ],
               "path": [
                 "incidents",
                 "{{teamIncidentId}}",
-                "escalations"
+                "history"
               ]
             }
           },
@@ -1818,83 +1669,7 @@
                 "exec": [
                   "pm.test('status 200', () => pm.response.to.have.status(200));",
                   "const body = pm.response.json();",
-                  "pm.test('UP then DOWN', () => pm.expect(body.map(e => e.direction)).to.eql(['UP', 'DOWN']));"
-                ]
-              }
-            }
-          ]
-        },
-        {
-          "name": "Timeline has every step",
-          "request": {
-            "method": "GET",
-            "header": [
-              {
-                "key": "X-User-Id",
-                "value": "{{dan}}"
-              }
-            ],
-            "url": {
-              "raw": "{{baseUrl}}/incidents/{{teamIncidentId}}/timeline",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "incidents",
-                "{{teamIncidentId}}",
-                "timeline"
-              ]
-            }
-          },
-          "event": [
-            {
-              "listen": "test",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "pm.test('status 200', () => pm.response.to.have.status(200));",
-                  "const body = pm.response.json();",
-                  "pm.test('timeline has INCIDENT_CREATED, STATUS_CHANGED, COMMENT_ADDED, DETAILS_UPDATED, SEVERITY_CHANGED, ESCALATED, DE_ESCALATED', () => { const a = body.map(e => e.action); [\"INCIDENT_CREATED\", \"STATUS_CHANGED\", \"COMMENT_ADDED\", \"DETAILS_UPDATED\", \"SEVERITY_CHANGED\", \"ESCALATED\", \"DE_ESCALATED\"].forEach(x => pm.expect(a).to.include(x)); });"
-                ]
-              }
-            }
-          ]
-        },
-        {
-          "name": "Emails sent about it",
-          "request": {
-            "method": "GET",
-            "header": [
-              {
-                "key": "X-User-Id",
-                "value": "{{dan}}"
-              }
-            ],
-            "url": {
-              "raw": "{{baseUrl}}/incidents/{{teamIncidentId}}/notifications",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "incidents",
-                "{{teamIncidentId}}",
-                "notifications"
-              ]
-            }
-          },
-          "event": [
-            {
-              "listen": "test",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "pm.test('status 200', () => pm.response.to.have.status(200));",
-                  "const body = pm.response.json();",
-                  "pm.test('acknowledged, escalated, de-escalated, resolved, reopened', () => {",
-                  "  const reasons = body.map(n => n.reason);",
-                  "  ['INCIDENT_ACKNOWLEDGED', 'INCIDENT_ESCALATED', 'INCIDENT_DEESCALATED', 'INCIDENT_RESOLVED', 'INCIDENT_REOPENED']",
-                  "    .forEach(r => pm.expect(reasons).to.include(r));",
-                  "});"
+                  "pm.test('history has INCIDENT_CREATED, STATUS_CHANGED, COMMENT_ADDED, DETAILS_UPDATED, ESCALATED, DE_ESCALATED', () => { const a = body.map(e => e.action); [\"INCIDENT_CREATED\", \"STATUS_CHANGED\", \"COMMENT_ADDED\", \"DETAILS_UPDATED\", \"ESCALATED\", \"DE_ESCALATED\"].forEach(x => pm.expect(a).to.include(x)); });"
                 ]
               }
             }
@@ -1927,7 +1702,7 @@
               "mode": "raw",
               "raw": "{\n  \"title\": \"Payments DB connection errors\",\n  \"description\": \"found by Bob\",\n  \"categoryId\": \"{{categoryDatabase}}\",\n  \"severity\": \"SEV2\"\n}"
             },
-            "description": "Setup step: Bob (reporter) creates the incident this part of the flow works on."
+            "description": "Setup: Bob reports the incident this part of the flow works on."
           },
           "event": [
             {
@@ -1937,7 +1712,8 @@
                 "exec": [
                   "pm.test('status 201', () => pm.response.to.have.status(201));",
                   "const body = pm.response.json();",
-                  "pm.test('OPEN, owned by Database', () => { pm.expect(body.status).to.eql('OPEN'); pm.expect(body.teamId).to.eql(pm.collectionVariables.get('teamDatabase')); });",
+                  "pm.test('status is OPEN', () => pm.expect(body.status).to.eql('OPEN'));",
+                  "pm.test('owned by Database', () => pm.expect(body.teamId).to.eql(pm.collectionVariables.get('teamDatabase')));",
                   "pm.collectionVariables.set('handoverIncidentId', body.id);"
                 ]
               }
@@ -1947,7 +1723,7 @@
         {
           "name": "Escalate SEV2 -> SEV1 and hand over to Platform",
           "request": {
-            "method": "POST",
+            "method": "PATCH",
             "header": [
               {
                 "key": "X-User-Id",
@@ -1959,19 +1735,18 @@
               }
             ],
             "url": {
-              "raw": "{{baseUrl}}/incidents/{{handoverIncidentId}}/escalate",
+              "raw": "{{baseUrl}}/incidents/{{handoverIncidentId}}",
               "host": [
                 "{{baseUrl}}"
               ],
               "path": [
                 "incidents",
-                "{{handoverIncidentId}}",
-                "escalate"
+                "{{handoverIncidentId}}"
               ]
             },
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"severity\": \"SEV1\",\n  \"targetTeamId\": \"{{teamPlatform}}\",\n  \"reason\": \"connection pool on the payments service\"\n}"
+              "raw": "{\n  \"severity\": \"SEV1\",\n  \"targetTeamId\": \"{{teamPlatform}}\",\n  \"reason\": \"connection pool of the payments service\"\n}"
             }
           },
           "event": [
@@ -1991,23 +1766,30 @@
         {
           "name": "Dan's team no longer owns it (403)",
           "request": {
-            "method": "POST",
+            "method": "PATCH",
             "header": [
               {
                 "key": "X-User-Id",
                 "value": "{{dan}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
               }
             ],
             "url": {
-              "raw": "{{baseUrl}}/incidents/{{handoverIncidentId}}/acknowledge",
+              "raw": "{{baseUrl}}/incidents/{{handoverIncidentId}}",
               "host": [
                 "{{baseUrl}}"
               ],
               "path": [
                 "incidents",
-                "{{handoverIncidentId}}",
-                "acknowledge"
+                "{{handoverIncidentId}}"
               ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"status\": \"IN_PROGRESS\"\n}"
             }
           },
           "event": [
@@ -2023,13 +1805,13 @@
           ]
         },
         {
-          "name": "Setup: Bob reports an incident to reassign",
+          "name": "Carol (Platform) acknowledges it",
           "request": {
-            "method": "POST",
+            "method": "PATCH",
             "header": [
               {
                 "key": "X-User-Id",
-                "value": "{{bob}}"
+                "value": "{{carol}}"
               },
               {
                 "key": "Content-Type",
@@ -2037,63 +1819,18 @@
               }
             ],
             "url": {
-              "raw": "{{baseUrl}}/incidents",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "incidents"
-              ]
-            },
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"title\": \"VPN users cannot reach the DB\",\n  \"description\": \"found by Bob\",\n  \"categoryId\": \"{{categoryDatabase}}\",\n  \"severity\": \"SEV2\"\n}"
-            },
-            "description": "Setup step: Bob (reporter) creates the incident this part of the flow works on."
-          },
-          "event": [
-            {
-              "listen": "test",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "pm.test('status 201', () => pm.response.to.have.status(201));",
-                  "const body = pm.response.json();",
-                  "pm.test('OPEN, owned by Database', () => { pm.expect(body.status).to.eql('OPEN'); pm.expect(body.teamId).to.eql(pm.collectionVariables.get('teamDatabase')); });",
-                  "pm.collectionVariables.set('reassignIncidentId', body.id);"
-                ]
-              }
-            }
-          ]
-        },
-        {
-          "name": "Reassign to Network (severity unchanged)",
-          "request": {
-            "method": "POST",
-            "header": [
-              {
-                "key": "X-User-Id",
-                "value": "{{dan}}"
-              },
-              {
-                "key": "Content-Type",
-                "value": "application/json"
-              }
-            ],
-            "url": {
-              "raw": "{{baseUrl}}/incidents/{{reassignIncidentId}}/reassign",
+              "raw": "{{baseUrl}}/incidents/{{handoverIncidentId}}",
               "host": [
                 "{{baseUrl}}"
               ],
               "path": [
                 "incidents",
-                "{{reassignIncidentId}}",
-                "reassign"
+                "{{handoverIncidentId}}"
               ]
             },
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"targetTeamId\": \"{{teamNetwork}}\",\n  \"reason\": \"VPN routing, not the database\"\n}"
+              "raw": "{\n  \"status\": \"IN_PROGRESS\"\n}"
             }
           },
           "event": [
@@ -2104,7 +1841,7 @@
                 "exec": [
                   "pm.test('status 200', () => pm.response.to.have.status(200));",
                   "const body = pm.response.json();",
-                  "pm.test('Network owns it, still SEV2', () => { pm.expect(body.teamId).to.eql(pm.collectionVariables.get('teamNetwork')); pm.expect(body.severity).to.eql('SEV2'); });"
+                  "pm.test('status is IN_PROGRESS', () => pm.expect(body.status).to.eql('IN_PROGRESS'));"
                 ]
               }
             }
@@ -2137,7 +1874,7 @@
               "mode": "raw",
               "raw": "{\n  \"title\": \"Replica lag (duplicate)\",\n  \"description\": \"found by Bob\",\n  \"categoryId\": \"{{categoryDatabase}}\",\n  \"severity\": \"SEV2\"\n}"
             },
-            "description": "Setup step: Bob (reporter) creates the incident this part of the flow works on."
+            "description": "Setup: Bob reports the incident this part of the flow works on."
           },
           "event": [
             {
@@ -2147,7 +1884,8 @@
                 "exec": [
                   "pm.test('status 201', () => pm.response.to.have.status(201));",
                   "const body = pm.response.json();",
-                  "pm.test('OPEN, owned by Database', () => { pm.expect(body.status).to.eql('OPEN'); pm.expect(body.teamId).to.eql(pm.collectionVariables.get('teamDatabase')); });",
+                  "pm.test('status is OPEN', () => pm.expect(body.status).to.eql('OPEN'));",
+                  "pm.test('owned by Database', () => pm.expect(body.teamId).to.eql(pm.collectionVariables.get('teamDatabase')));",
                   "pm.collectionVariables.set('cancelIncidentId', body.id);"
                 ]
               }
@@ -2157,7 +1895,7 @@
         {
           "name": "Cancel needs a reason (400)",
           "request": {
-            "method": "PUT",
+            "method": "PATCH",
             "header": [
               {
                 "key": "X-User-Id",
@@ -2169,14 +1907,13 @@
               }
             ],
             "url": {
-              "raw": "{{baseUrl}}/incidents/{{cancelIncidentId}}/status",
+              "raw": "{{baseUrl}}/incidents/{{cancelIncidentId}}",
               "host": [
                 "{{baseUrl}}"
               ],
               "path": [
                 "incidents",
-                "{{cancelIncidentId}}",
-                "status"
+                "{{cancelIncidentId}}"
               ]
             },
             "body": {
@@ -2199,7 +1936,7 @@
         {
           "name": "Cancel as duplicate (-> CANCELLED)",
           "request": {
-            "method": "PUT",
+            "method": "PATCH",
             "header": [
               {
                 "key": "X-User-Id",
@@ -2211,19 +1948,18 @@
               }
             ],
             "url": {
-              "raw": "{{baseUrl}}/incidents/{{cancelIncidentId}}/status",
+              "raw": "{{baseUrl}}/incidents/{{cancelIncidentId}}",
               "host": [
                 "{{baseUrl}}"
               ],
               "path": [
                 "incidents",
-                "{{cancelIncidentId}}",
-                "status"
+                "{{cancelIncidentId}}"
               ]
             },
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"status\": \"CANCELLED\",\n  \"note\": \"duplicate of 'Replica lag on db-02'\"\n}"
+              "raw": "{\n  \"status\": \"CANCELLED\",\n  \"reason\": \"duplicate of 'Replica lag on db-02'\"\n}"
             }
           },
           "event": [
@@ -2234,7 +1970,132 @@
                 "exec": [
                   "pm.test('status 200', () => pm.response.to.have.status(200));",
                   "const body = pm.response.json();",
-                  "pm.test('now CANCELLED', () => pm.expect(body.status).to.eql('CANCELLED'));"
+                  "pm.test('status is CANCELLED', () => pm.expect(body.status).to.eql('CANCELLED'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Setup: Bob reports an incident for a combined update",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-User-Id",
+                "value": "{{bob}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/incidents",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "incidents"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"title\": \"Writes failing\",\n  \"description\": \"found by Bob\",\n  \"categoryId\": \"{{categoryDatabase}}\",\n  \"severity\": \"SEV2\"\n}"
+            },
+            "description": "Setup: Bob reports the incident this part of the flow works on."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 201', () => pm.response.to.have.status(201));",
+                  "const body = pm.response.json();",
+                  "pm.test('status is OPEN', () => pm.expect(body.status).to.eql('OPEN'));",
+                  "pm.test('owned by Database', () => pm.expect(body.teamId).to.eql(pm.collectionVariables.get('teamDatabase')));",
+                  "pm.collectionVariables.set('combinedIncidentId', body.id);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Rename, escalate and acknowledge in one PATCH",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "X-User-Id",
+                "value": "{{dan}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/incidents/{{combinedIncidentId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "incidents",
+                "{{combinedIncidentId}}"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"title\": \"Primary DB rejects writes\",\n  \"severity\": \"SEV1\",\n  \"status\": \"IN_PROGRESS\",\n  \"reason\": \"disk full\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 200', () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test('all three applied', () => { pm.expect(body.title).to.eql('Primary DB rejects writes'); pm.expect(body.severity).to.eql('SEV1'); pm.expect(body.status).to.eql('IN_PROGRESS'); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "History: the three changes share one correlation id",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-User-Id",
+                "value": "{{dan}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/incidents/{{combinedIncidentId}}/history",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "incidents",
+                "{{combinedIncidentId}}",
+                "history"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 200', () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test('history has DETAILS_UPDATED, ESCALATED, STATUS_CHANGED', () => { const a = body.map(e => e.action); [\"DETAILS_UPDATED\", \"ESCALATED\", \"STATUS_CHANGED\"].forEach(x => pm.expect(a).to.include(x)); });",
+                  "pm.test('one correlation id', () => { const ids = body.filter(e => e.action !== 'INCIDENT_CREATED').map(e => e.correlationId); pm.expect(new Set(ids).size).to.eql(1); });"
                 ]
               }
             }
@@ -2243,7 +2104,7 @@
         {
           "name": "Another team may not touch Database incidents (403)",
           "request": {
-            "method": "PUT",
+            "method": "PATCH",
             "header": [
               {
                 "key": "X-User-Id",
@@ -2255,19 +2116,18 @@
               }
             ],
             "url": {
-              "raw": "{{baseUrl}}/incidents/{{teamIncidentId}}/severity",
+              "raw": "{{baseUrl}}/incidents/{{teamIncidentId}}",
               "host": [
                 "{{baseUrl}}"
               ],
               "path": [
                 "incidents",
-                "{{teamIncidentId}}",
-                "severity"
+                "{{teamIncidentId}}"
               ]
             },
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"severity\": \"SEV4\"\n}"
+              "raw": "{\n  \"title\": \"x\"\n}"
             }
           },
           "event": [
@@ -2283,7 +2143,7 @@
           ]
         }
       ],
-      "description": "Dan is a responder in the Database team. 'Setup' steps create incidents as Bob."
+      "description": "Dan is a responder in Database. 'Setup' steps create incidents as Bob."
     }
   ],
   "variable": [
@@ -2293,27 +2153,37 @@
     },
     {
       "key": "ada",
-      "value": "ada"
+      "value": "ada",
+      "description": "username, sent as X-User-Id"
     },
     {
       "key": "alice",
-      "value": "alice"
+      "value": "alice",
+      "description": "username, sent as X-User-Id"
     },
     {
       "key": "bob",
-      "value": "bob"
+      "value": "bob",
+      "description": "username, sent as X-User-Id"
     },
     {
       "key": "carol",
-      "value": "carol"
+      "value": "carol",
+      "description": "username, sent as X-User-Id"
     },
     {
       "key": "dan",
-      "value": "dan"
+      "value": "dan",
+      "description": "username, sent as X-User-Id"
     },
     {
-      "key": "unknownUser",
-      "value": "nobody"
+      "key": "erin",
+      "value": "erin",
+      "description": "username, sent as X-User-Id"
+    },
+    {
+      "key": "adaId",
+      "value": "20000000-0000-0000-0000-000000000001"
     },
     {
       "key": "aliceId",
@@ -2324,8 +2194,20 @@
       "value": "20000000-0000-0000-0000-000000000003"
     },
     {
+      "key": "carolId",
+      "value": "20000000-0000-0000-0000-000000000004"
+    },
+    {
       "key": "danId",
       "value": "20000000-0000-0000-0000-000000000005"
+    },
+    {
+      "key": "erinId",
+      "value": "20000000-0000-0000-0000-000000000006"
+    },
+    {
+      "key": "unknownUser",
+      "value": "nobody"
     },
     {
       "key": "teamPlatform",
@@ -2340,8 +2222,24 @@
       "value": "10000000-0000-0000-0000-000000000003"
     },
     {
+      "key": "categoryPayments",
+      "value": "30000000-0000-0000-0000-000000000001"
+    },
+    {
+      "key": "categoryWebApplication",
+      "value": "30000000-0000-0000-0000-000000000002"
+    },
+    {
       "key": "categoryDatabase",
       "value": "30000000-0000-0000-0000-000000000003"
+    },
+    {
+      "key": "categoryVpn",
+      "value": "30000000-0000-0000-0000-000000000004"
+    },
+    {
+      "key": "categoryNetwork",
+      "value": "30000000-0000-0000-0000-000000000005"
     },
     {
       "key": "reporterIncidentId",
@@ -2356,11 +2254,11 @@
       "value": ""
     },
     {
-      "key": "reassignIncidentId",
+      "key": "cancelIncidentId",
       "value": ""
     },
     {
-      "key": "cancelIncidentId",
+      "key": "combinedIncidentId",
       "value": ""
     }
   ]

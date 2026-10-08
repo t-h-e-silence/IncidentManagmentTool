@@ -21,22 +21,26 @@ class IncidentTest {
         assertThat(incident.toView().description()).isEmpty();
     }
 
+    private void acknowledge() {
+        incident.changeStatus(IncidentStatus.IN_PROGRESS, DAN.id(), null, NOW);
+    }
+
     private void resolved() {
-        incident.acknowledge(NOW);
+        acknowledge();
         incident.changeStatus(IncidentStatus.IN_REVIEW, DAN.id(), null, NOW);
-        incident.resolve(DAN.id(), "done", NOW);
+        incident.changeStatus(IncidentStatus.RESOLVED, DAN.id(), "done", NOW);
     }
 
     @Test
     void followsTheLifecycle() {
-        incident.acknowledge(NOW);
+        acknowledge();
         assertThat(incident.getStatus()).isEqualTo(IncidentStatus.IN_PROGRESS);
         assertThat(incident.toView().acknowledgedAt()).isEqualTo(NOW);
 
         incident.changeStatus(IncidentStatus.IN_REVIEW, DAN.id(), null, NOW);
         assertThat(incident.getStatus()).isEqualTo(IncidentStatus.IN_REVIEW);
 
-        incident.resolve(DAN.id(), " fixed index ", NOW);
+        incident.changeStatus(IncidentStatus.RESOLVED, DAN.id(), " fixed index ", NOW);
         IncidentView view = incident.toView();
         assertThat(view.status()).isEqualTo(IncidentStatus.RESOLVED);
         assertThat(view.resolvedBy()).isEqualTo(DAN.id());
@@ -49,16 +53,16 @@ class IncidentTest {
 
     @Test
     void onlyAReviewedIncidentCanBeResolved() {
-        assertThatThrownBy(() -> incident.resolve(DAN.id(), "duplicate", NOW))
+        assertThatThrownBy(() -> incident.changeStatus(IncidentStatus.RESOLVED, DAN.id(), "duplicate", NOW))
                 .isInstanceOf(BusinessRuleException.class);
-        incident.acknowledge(NOW);
-        assertThatThrownBy(() -> incident.resolve(DAN.id(), "fixed", NOW))
+        acknowledge();
+        assertThatThrownBy(() -> incident.changeStatus(IncidentStatus.RESOLVED, DAN.id(), "fixed", NOW))
                 .isInstanceOf(BusinessRuleException.class);
     }
 
     @Test
     void reviewCanSendItBackToWork() {
-        incident.acknowledge(NOW);
+        acknowledge();
         incident.changeStatus(IncidentStatus.IN_REVIEW, DAN.id(), null, NOW);
 
         incident.changeStatus(IncidentStatus.IN_PROGRESS, DAN.id(), null, NOW);
@@ -129,35 +133,37 @@ class IncidentTest {
     }
 
     @Test
-    void deEscalationLowersSeverityAndMayHandOver() {
-        incident.acknowledge(NOW);
+    void deEscalationLowersSeverityAndKeepsTeamAndStatus() {
+        acknowledge();
 
-        incident.deEscalate(Severity.SEV4, PLATFORM, NOW);
+        incident.deEscalate(Severity.SEV4, NOW);
 
-        assertThat(incident.getSeverity()).isEqualTo(Severity.SEV4);
-        assertThat(incident.getTeamId()).isEqualTo(PLATFORM);
-        assertThat(incident.getStatus()).isEqualTo(IncidentStatus.OPEN);
-        assertThatThrownBy(() -> incident.deEscalate(Severity.SEV4, null, NOW))
+        assertThat(incident.toView().severity()).isEqualTo(Severity.SEV4);
+        assertThat(incident.getTeamId()).isEqualTo(DATABASE);
+        assertThat(incident.getStatus()).isEqualTo(IncidentStatus.IN_PROGRESS);
+        assertThatThrownBy(() -> incident.deEscalate(Severity.SEV4, NOW))
                 .isInstanceOf(BusinessRuleException.class);
-        assertThatThrownBy(() -> incident.deEscalate(Severity.SEV1, null, NOW))
+        assertThatThrownBy(() -> incident.deEscalate(Severity.SEV1, NOW))
                 .isInstanceOf(BusinessRuleException.class);
     }
 
     @Test
     void acknowledgeOnlyWhenOpen() {
-        incident.acknowledge(NOW);
+        acknowledge();
 
-        assertThatThrownBy(() -> incident.acknowledge(NOW)).isInstanceOf(BusinessRuleException.class);
+        assertThatThrownBy(this::acknowledge).isInstanceOf(BusinessRuleException.class);
     }
 
     @Test
     void resolvedIncidentIsReadOnly() {
         resolved();
 
-        assertThatThrownBy(() -> incident.resolve(DAN.id(), "again", NOW)).isInstanceOf(BusinessRuleException.class);
-        assertThatThrownBy(() -> incident.changeSeverity(Severity.SEV1, NOW)).isInstanceOf(BusinessRuleException.class);
+        assertThatThrownBy(() -> incident.changeStatus(IncidentStatus.RESOLVED, DAN.id(), "again", NOW))
+                .isInstanceOf(BusinessRuleException.class);
+        assertThatThrownBy(() -> incident.deEscalate(Severity.SEV3, NOW)).isInstanceOf(BusinessRuleException.class);
         assertThatThrownBy(() -> incident.addComment(DAN.id(), "late", NOW)).isInstanceOf(BusinessRuleException.class);
-        assertThatThrownBy(() -> incident.reassign(PLATFORM, NOW)).isInstanceOf(BusinessRuleException.class);
+        assertThatThrownBy(() -> incident.escalate(Severity.SEV1, PLATFORM, NOW))
+                .isInstanceOf(BusinessRuleException.class);
         assertThatThrownBy(() -> incident.updateDetails("new", null, NOW)).isInstanceOf(BusinessRuleException.class);
         assertThatThrownBy(() -> incident.escalate(Severity.SEV1, null, NOW))
                 .isInstanceOf(BusinessRuleException.class);
@@ -165,46 +171,28 @@ class IncidentTest {
 
     @Test
     void resolveNeedsANote() {
-        incident.acknowledge(NOW);
+        acknowledge();
         incident.changeStatus(IncidentStatus.IN_REVIEW, DAN.id(), null, NOW);
 
-        assertThatThrownBy(() -> incident.resolve(DAN.id(), " ", NOW)).isInstanceOf(IllegalArgumentException.class);
-    }
-
-    @Test
-    void severityMustChange() {
-        incident.changeSeverity(Severity.SEV1, NOW);
-        assertThat(incident.getSeverity()).isEqualTo(Severity.SEV1);
-
-        assertThatThrownBy(() -> incident.changeSeverity(Severity.SEV1, NOW)).isInstanceOf(BusinessRuleException.class);
-    }
-
-    @Test
-    void reassignHandsOverAndReopens() {
-        incident.acknowledge(NOW);
-
-        incident.reassign(PLATFORM, NOW);
-
-        assertThat(incident.getTeamId()).isEqualTo(PLATFORM);
-        assertThat(incident.getStatus()).isEqualTo(IncidentStatus.OPEN);
-        assertThat(incident.toView().acknowledgedAt()).isNull();
-        assertThatThrownBy(() -> incident.reassign(PLATFORM, NOW)).isInstanceOf(BusinessRuleException.class);
+        assertThatThrownBy(() -> incident.changeStatus(IncidentStatus.RESOLVED, DAN.id(), " ", NOW)).isInstanceOf(IllegalArgumentException.class);
     }
 
     @Test
     void escalationRaisesSeverityAndMayHandOver() {
-        incident.acknowledge(NOW);
+        acknowledge();
 
         incident.escalate(Severity.SEV1, PLATFORM, NOW);
 
-        assertThat(incident.getSeverity()).isEqualTo(Severity.SEV1);
-        assertThat(incident.getTeamId()).isEqualTo(PLATFORM);
-        assertThat(incident.getStatus()).isEqualTo(IncidentStatus.OPEN);
+        IncidentView view = incident.toView();
+        assertThat(view.severity()).isEqualTo(Severity.SEV1);
+        assertThat(view.teamId()).isEqualTo(PLATFORM);
+        assertThat(view.status()).isEqualTo(IncidentStatus.OPEN);
+        assertThat(view.acknowledgedAt()).isNull();
     }
 
     @Test
     void escalationWithinTheTeamKeepsStatus() {
-        incident.acknowledge(NOW);
+        acknowledge();
 
         incident.escalate(Severity.SEV1, null, NOW);
 
@@ -220,7 +208,7 @@ class IncidentTest {
                 .isInstanceOf(BusinessRuleException.class);
         assertThatThrownBy(() -> incident.escalate(Severity.SEV1, DATABASE, NOW))
                 .isInstanceOf(BusinessRuleException.class);
-        assertThat(incident.getSeverity()).isEqualTo(Severity.SEV2);
+        assertThat(incident.toView().severity()).isEqualTo(Severity.SEV2);
         assertThat(incident.getTeamId()).isEqualTo(DATABASE);
     }
 

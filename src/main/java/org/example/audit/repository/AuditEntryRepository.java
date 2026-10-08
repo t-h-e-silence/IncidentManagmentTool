@@ -14,6 +14,4 @@ public interface AuditEntryRepository extends Repository<AuditEntry, UUID> {
     AuditEntry save(AuditEntry entry);
 
     List<AuditEntry> findByIncidentIdOrderByOccurredAtAsc(UUID incidentId);
-
-    List<AuditEntry> findByActorIdOrderByOccurredAtAsc(UUID actorId);
 }

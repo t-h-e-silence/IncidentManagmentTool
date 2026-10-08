@@ -34,9 +34,4 @@ public class AuditServiceImpl implements AuditService {
         return entries.findByIncidentIdOrderByOccurredAtAsc(incidentId).stream().map(AuditEntry::toView).toList();
     }
 
-    @Override
-    @Transactional(readOnly = true)
-    public List<AuditEntryView> getActionsByUser(UUID userId) {
-        return entries.findByActorIdOrderByOccurredAtAsc(userId).stream().map(AuditEntry::toView).toList();
-    }
 }

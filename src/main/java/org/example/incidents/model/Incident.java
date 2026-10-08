@@ -113,23 +113,6 @@ public class Incident {
     }
 
     /**
-     * {@code OPEN -> IN_PROGRESS}.
-     */
-    public void acknowledge(Instant now) {
-        if (status != IncidentStatus.OPEN) {
-            throw new BusinessRuleException("Only an OPEN incident can be acknowledged, status is " + status);
-        }
-        changeStatus(IncidentStatus.IN_PROGRESS, null, null, now);
-    }
-
-    /**
-     * {@code IN_REVIEW -> RESOLVED} with a note.
-     */
-    public void resolve(UUID resolvedBy, String note, Instant now) {
-        changeStatus(IncidentStatus.RESOLVED, resolvedBy, note, now);
-    }
-
-    /**
      * Moves along the lifecycle of {@link IncidentStatus}. A note is required to resolve, to cancel and to reopen
      * a resolved incident; it is kept as the resolution note when resolving.
      *
@@ -187,20 +170,11 @@ public class Incident {
         updatedAt = now;
     }
 
-    public void changeSeverity(Severity newSeverity, Instant now) {
-        Objects.requireNonNull(newSeverity, "severity");
-        requireActive();
-        if (newSeverity == severity) {
-            throw new BusinessRuleException("Severity is already " + severity);
-        }
-        severity = newSeverity;
-        updatedAt = now;
-    }
-
     /**
-     * Hands the incident over to another team. The new team has not acknowledged it yet, so it is {@code OPEN} again.
+     * Hands the incident over to another team (part of an escalation). The new team has not acknowledged it yet,
+     * so it is {@code OPEN} again.
      */
-    public void reassign(UUID targetTeamId, Instant now) {
+    private void reassign(UUID targetTeamId, Instant now) {
         Objects.requireNonNull(targetTeamId, "targetTeamId");
         requireActive();
         if (targetTeamId.equals(teamId)) {
@@ -228,18 +202,16 @@ public class Incident {
     }
 
     /**
-     * De-escalation: severity must go down; optionally hands the incident over to another team, which makes it
-     * {@code OPEN} again for that team.
-     *
-     * @param targetTeamId new owning team, or null to keep the current one
+     * De-escalation: severity must go down. The team keeps the incident; only an escalation hands it over.
      */
-    public void deEscalate(Severity newSeverity, UUID targetTeamId, Instant now) {
+    public void deEscalate(Severity newSeverity, Instant now) {
         Objects.requireNonNull(newSeverity, "severity");
         requireActive();
         if (!severity.isHigherThan(newSeverity)) {
             throw new BusinessRuleException("A de-escalation must lower severity below " + severity);
         }
-        changeSeverityAndTeam(newSeverity, targetTeamId, now);
+        severity = newSeverity;
+        updatedAt = now;
     }
 
     public Comment addComment(UUID authorId, String text, Instant now) {
@@ -270,10 +242,6 @@ public class Incident {
 
     public UUID getReporterId() {
         return reporterId;
-    }
-
-    public Severity getSeverity() {
-        return severity;
     }
 
     public IncidentStatus getStatus() {

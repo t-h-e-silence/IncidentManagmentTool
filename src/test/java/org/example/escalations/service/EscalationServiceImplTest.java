@@ -5,7 +5,6 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.example.TestData.*;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.verify;
-import static org.mockito.Mockito.when;
 
 import java.util.List;
 import java.util.Map;
@@ -19,7 +18,6 @@ import org.example.escalations.model.Escalation;
 import org.example.escalations.model.EscalationDirection;
 import org.example.escalations.model.EscalationRecipients;
 import org.example.escalations.model.EscalationRecord;
-import org.example.escalations.model.EscalationView;
 import org.example.escalations.repository.EscalationRepository;
 import org.example.notifications.model.EmailMessage;
 import org.example.notifications.model.NotificationReason;
@@ -63,15 +61,12 @@ class EscalationServiceImplTest {
 
     @Test
     void handOverEmailsEachReceiverDifferentlyAndSkipsTheEscalator() {
-        when(repository.save(any(Escalation.class))).thenAnswer(invocation -> invocation.getArgument(0));
 
-        EscalationView view = service.recordAndNotify(record(DATABASE, "Database", PLATFORM, "Platform"),
+        service.recordAndNotify(record(DATABASE, "Database", PLATFORM, "Platform"),
                 new EscalationRecipients(List.of(recipient(CAROL)), List.of(recipient(ALICE), recipient(DAN)),
                         Optional.of(recipient(BOB))));
 
-        assertThat(view.fromTeamId()).isEqualTo(DATABASE);
-        assertThat(view.toTeamId()).isEqualTo(PLATFORM);
-        assertThat(view.escalatedAt()).isEqualTo(NOW);
+        verify(repository).save(any(Escalation.class));
 
         Map<UUID, EmailMessage> emails = sentEmails();
         assertThat(emails).containsOnlyKeys(CAROL.id(), ALICE.id(), BOB.id());
@@ -86,7 +81,6 @@ class EscalationServiceImplTest {
 
     @Test
     void sameTeamEscalationEmailsTheTeamAndReporterOnly() {
-        when(repository.save(any(Escalation.class))).thenAnswer(invocation -> invocation.getArgument(0));
 
         service.recordAndNotify(record(DATABASE, "Database", DATABASE, "Database"),
                 new EscalationRecipients(List.of(recipient(ALICE), recipient(DAN)), List.of(recipient(ALICE)),
@@ -100,7 +94,6 @@ class EscalationServiceImplTest {
 
     @Test
     void reporterInTheOwningTeamGetsOnlyTheTeamEmail() {
-        when(repository.save(any(Escalation.class))).thenAnswer(invocation -> invocation.getArgument(0));
 
         service.recordAndNotify(record(DATABASE, "Database", PLATFORM, "Platform"),
                 new EscalationRecipients(List.of(recipient(BOB)), List.of(), Optional.of(recipient(BOB))));
@@ -110,14 +103,13 @@ class EscalationServiceImplTest {
 
     @Test
     void deEscalationIsRecordedAndEmailedAsSuch() {
-        when(repository.save(any(Escalation.class))).thenAnswer(invocation -> invocation.getArgument(0));
         EscalationRecord deEscalation = new EscalationRecord(incidentId, "DB down", DAN.id(), "Dan Dba",
                 "only one replica affected", Severity.SEV1, Severity.SEV3, DATABASE, "Database", DATABASE, "Database");
 
-        EscalationView view = service.recordAndNotify(deEscalation,
+        service.recordAndNotify(deEscalation,
                 new EscalationRecipients(List.of(recipient(ALICE)), List.of(), Optional.of(recipient(BOB))));
 
-        assertThat(view.direction()).isEqualTo(EscalationDirection.DOWN);
+        assertThat(deEscalation.direction()).isEqualTo(EscalationDirection.DOWN);
         @SuppressWarnings("unchecked")
         ArgumentCaptor<List<EmailMessage>> sent = ArgumentCaptor.forClass(List.class);
         verify(notifications).send(sent.capture());

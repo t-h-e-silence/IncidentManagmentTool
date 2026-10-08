@@ -17,17 +17,16 @@ class NotificationTest {
 
     @Test
     void startsPendingAndDueNow() {
-        NotificationView view = notification.toView();
-        assertThat(view.status()).isEqualTo(NotificationStatus.PENDING);
-        assertThat(view.nextAttemptAt()).isEqualTo(NOW);
-        assertThat(view.recipientEmail()).isEqualTo("dan@example.com");
+        assertThat(notification.getStatus()).isEqualTo(NotificationStatus.PENDING);
+        assertThat(notification.getNextAttemptAt()).isEqualTo(NOW);
+        assertThat(notification.getRecipientEmail()).isEqualTo("dan@example.com");
     }
 
     @Test
     void retriesThenDeadLetters() {
         notification.markFailed("connection refused", NOW, RetryPolicy.DEFAULT);
         assertThat(notification.getStatus()).isEqualTo(NotificationStatus.RETRYING);
-        assertThat(notification.toView().nextAttemptAt()).isEqualTo(NOW.plus(Duration.ofMinutes(1)));
+        assertThat(notification.getNextAttemptAt()).isEqualTo(NOW.plus(Duration.ofMinutes(1)));
 
         notification.markFailed("x", NOW, RetryPolicy.DEFAULT);
         notification.markFailed("x", NOW, RetryPolicy.DEFAULT);
@@ -35,21 +34,8 @@ class NotificationTest {
 
         assertThat(notification.getStatus()).isEqualTo(NotificationStatus.DEAD_LETTERED);
         assertThat(notification.getAttempts()).isEqualTo(4);
-        assertThat(notification.toView().lastError()).isEqualTo("still down");
+        assertThat(notification.getLastError()).isEqualTo("still down");
         assertThatThrownBy(() -> notification.markSent(NOW)).isInstanceOf(BusinessRuleException.class);
-    }
-
-    @Test
-    void replayOnlyFromDeadLetter() {
-        assertThatThrownBy(() -> notification.replay(NOW)).isInstanceOf(BusinessRuleException.class);
-
-        for (int i = 0; i < RetryPolicy.DEFAULT.maxAttempts(); i++) {
-            notification.markFailed("down", NOW, RetryPolicy.DEFAULT);
-        }
-        notification.replay(NOW);
-
-        assertThat(notification.getStatus()).isEqualTo(NotificationStatus.PENDING);
-        assertThat(notification.getAttempts()).isZero();
     }
 
     @Test
@@ -57,10 +43,9 @@ class NotificationTest {
         notification.markFailed("down", NOW, RetryPolicy.DEFAULT);
         notification.markSent(NOW);
 
-        NotificationView view = notification.toView();
-        assertThat(view.status()).isEqualTo(NotificationStatus.SENT);
-        assertThat(view.sentAt()).isEqualTo(NOW);
-        assertThat(view.lastError()).isNull();
-        assertThat(view.nextAttemptAt()).isNull();
+        assertThat(notification.getStatus()).isEqualTo(NotificationStatus.SENT);
+        assertThat(notification.getSentAt()).isEqualTo(NOW);
+        assertThat(notification.getLastError()).isNull();
+        assertThat(notification.getNextAttemptAt()).isNull();
     }
 }

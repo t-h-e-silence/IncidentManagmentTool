@@ -65,11 +65,4 @@ public class Escalation {
         this.toTeamId = record.toTeamId();
         this.escalatedAt = escalatedAt;
     }
-
-    public EscalationView toView() {
-        EscalationDirection direction = toSeverity.isHigherThan(fromSeverity)
-                ? EscalationDirection.UP : EscalationDirection.DOWN;
-        return new EscalationView(id, incidentId, actorId, direction, reason, fromSeverity, toSeverity, fromTeamId,
-                toTeamId, escalatedAt);
-    }
 }

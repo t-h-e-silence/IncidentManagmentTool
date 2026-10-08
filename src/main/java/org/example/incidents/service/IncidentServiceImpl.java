@@ -72,13 +72,6 @@ public class IncidentServiceImpl implements IncidentService {
     }
 
     @Override
-    @Transactional(readOnly = true)
-    public List<IncidentSummary> listTeamQueue(UUID teamId) {
-        return summaries(incidents.findByTeamIdAndStatusInOrderBySeverityAscCreatedAtAsc(teamId,
-                IncidentStatus.ACTIVE));
-    }
-
-    @Override
     public CommentView addComment(Actor actor, UUID incidentId, String text) {
         Incident incident = load(incidentId);
         if (!actor.isMemberOf(incident.getTeamId()) && !actor.id().equals(incident.getReporterId())) {
@@ -87,16 +80,6 @@ public class IncidentServiceImpl implements IncidentService {
         Comment comment = incident.addComment(actor.id(), text, clock.instant());
         save(incident);
         return comment.toView();
-    }
-
-    @Override
-    public IncidentChange acknowledge(Actor actor, UUID incidentId) {
-        return changeByTeamMember(actor, incidentId, incident -> incident.acknowledge(clock.instant()));
-    }
-
-    @Override
-    public IncidentChange resolve(Actor actor, UUID incidentId, String note) {
-        return changeByTeamMember(actor, incidentId, incident -> incident.resolve(actor.id(), note, clock.instant()));
     }
 
     @Override
@@ -115,29 +98,14 @@ public class IncidentServiceImpl implements IncidentService {
     }
 
     @Override
-    public IncidentChange changeSeverity(Actor actor, UUID incidentId, Severity severity) {
-        return changeByTeamMember(actor, incidentId, incident -> incident.changeSeverity(severity, clock.instant()));
-    }
-
-    @Override
     public IncidentChange escalate(Actor actor, UUID incidentId, Severity newSeverity, UUID targetTeamId) {
         return changeByTeamMember(actor, incidentId,
                 incident -> incident.escalate(newSeverity, targetTeamId, clock.instant()));
     }
 
     @Override
-    public IncidentChange deEscalate(Actor actor, UUID incidentId, Severity newSeverity, UUID targetTeamId) {
-        return changeByTeamMember(actor, incidentId,
-                incident -> incident.deEscalate(newSeverity, targetTeamId, clock.instant()));
-    }
-
-    @Override
-    public IncidentChange reassign(Actor actor, UUID incidentId, UUID targetTeamId) {
-        Incident incident = load(incidentId);
-        if (!actor.isMemberOf(incident.getTeamId()) && !actor.isAdmin()) {
-            throw new ForbiddenException("Only the owning team or an admin may reassign incident " + incidentId);
-        }
-        return change(incident, i -> i.reassign(targetTeamId, clock.instant()));
+    public IncidentChange deEscalate(Actor actor, UUID incidentId, Severity newSeverity) {
+        return changeByTeamMember(actor, incidentId, incident -> incident.deEscalate(newSeverity, clock.instant()));
     }
 
     private IncidentChange changeByTeamMember(Actor actor, UUID incidentId, Consumer<Incident> change) {

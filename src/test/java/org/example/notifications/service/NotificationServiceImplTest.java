@@ -1,7 +1,6 @@
 package org.example.notifications.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.example.TestData.*;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
@@ -10,10 +9,8 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import java.util.List;
-import java.util.Optional;
 import java.util.UUID;
 
-import org.example.common.exception.NotFoundException;
 import org.example.common.model.Recipient;
 import org.example.common.model.Severity;
 import org.example.notifications.model.EmailMessage;
@@ -92,15 +89,7 @@ class NotificationServiceImplTest {
         service.deliverDue();
 
         assertThat(failing.getStatus()).isEqualTo(NotificationStatus.RETRYING);
-        assertThat(failing.toView().lastError()).isEqualTo("SMTP down");
+        assertThat(failing.getLastError()).isEqualTo("SMTP down");
         assertThat(fine.getStatus()).isEqualTo(NotificationStatus.SENT);
-    }
-
-    @Test
-    void replayUnknownNotificationIsNotFound() {
-        UUID id = UUID.randomUUID();
-        when(repository.findById(id)).thenReturn(Optional.empty());
-
-        assertThatThrownBy(() -> service.replay(id)).isInstanceOf(NotFoundException.class);
     }
 }

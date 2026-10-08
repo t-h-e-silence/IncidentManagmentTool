@@ -6,6 +6,7 @@ import java.util.UUID;
 import jakarta.servlet.http.HttpServletRequest;
 
 import org.example.common.exception.UnauthenticatedException;
+import org.example.organization.service.OrganizationService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.core.MethodParameter;
@@ -17,19 +18,19 @@ import org.springframework.web.method.support.ModelAndViewContainer;
 import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
 
 /**
- * Turns the {@value IncidentManagementHttpController#USER_HEADER} header (user id or username) into the user id
+ * Turns the {@value ActingUser.HEADER} header (user id or username) into the user id
  * for {@link ActingUser} parameters. Missing or unknown → {@link UnauthenticatedException} (401). Whether the user
- * may act is checked by the controller, as for any caller.
+ * may act is checked by the controller, as for any caller. Only identifies the caller; it does no other work.
  */
 @Component
 public class ActingUserResolver implements HandlerMethodArgumentResolver, WebMvcConfigurer {
 
     private static final Logger log = LoggerFactory.getLogger(ActingUserResolver.class);
 
-    private final IncidentManagementController controller;
+    private final OrganizationService organization;
 
-    public ActingUserResolver(IncidentManagementController controller) {
-        this.controller = controller;
+    public ActingUserResolver(OrganizationService organization) {
+        this.organization = organization;
     }
 
     @Override
@@ -45,20 +46,20 @@ public class ActingUserResolver implements HandlerMethodArgumentResolver, WebMvc
     @Override
     public UUID resolveArgument(MethodParameter parameter, ModelAndViewContainer mavContainer,
                                 NativeWebRequest request, WebDataBinderFactory binderFactory) {
-        String user = request.getHeader(IncidentManagementHttpController.USER_HEADER);
+        String user = request.getHeader(ActingUser.HEADER);
         if (user == null || user.isBlank()) {
             log.warn("{} {}: header {} is missing", method(request), path(request),
-                    IncidentManagementHttpController.USER_HEADER);
-            throw new UnauthenticatedException("Header " + IncidentManagementHttpController.USER_HEADER
+                    ActingUser.HEADER);
+            throw new UnauthenticatedException("Header " + ActingUser.HEADER
                     + " (user id or username) is missing");
         }
-        UUID userId = controller.findUserId(user).orElseThrow(() -> {
+        UUID userId = organization.findUserId(user).orElseThrow(() -> {
             log.warn("{} {}: no user with username '{}'. Demo users (ada, alice, bob, carol, dan, erin) exist only "
                     + "when the app was started with the 'seed' profile", method(request), path(request), user);
             return new UnauthenticatedException("Unknown user " + user);
         });
         log.debug("{} {}: {} '{}' is user {}", method(request), path(request),
-                IncidentManagementHttpController.USER_HEADER, user, userId);
+                ActingUser.HEADER, user, userId);
         return userId;
     }
 

@@ -13,7 +13,6 @@ import jakarta.persistence.Id;
 import jakarta.persistence.Table;
 import jakarta.persistence.Version;
 
-import org.example.common.exception.BusinessRuleException;
 import org.example.common.model.SystemRole;
 import org.example.common.model.Text;
 
@@ -65,25 +64,10 @@ public class User {
     }
 
     /**
-     * The user can no longer act or be notified.
-     */
-    public void deactivate(Instant now) {
-        if (!active) {
-            throw new BusinessRuleException("User " + id + " is already deactivated");
-        }
-        active = false;
-        deactivatedAt = Objects.requireNonNull(now, "now");
-    }
-
-    /**
      * Only an active, non-system user may call the controller and be emailed.
      */
     public boolean canAct() {
         return active && systemRole != SystemRole.SYSTEM;
-    }
-
-    public UserView toView() {
-        return new UserView(id, name, email, systemRole, active);
     }
 
     public UUID getId() {

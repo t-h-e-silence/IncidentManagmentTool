@@ -44,16 +44,8 @@ public class Category {
         this.active = true;
     }
 
-    public void deactivate() {
-        active = false;
-    }
-
     public boolean isActive() {
         return active;
-    }
-
-    public CategoryView toView() {
-        return new CategoryView(id, name);
     }
 
     public CategoryRouting toRouting() {

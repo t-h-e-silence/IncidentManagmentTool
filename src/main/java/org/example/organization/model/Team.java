@@ -4,7 +4,6 @@ import java.time.Instant;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Objects;
-import java.util.Optional;
 import java.util.UUID;
 
 import jakarta.persistence.CollectionTable;
@@ -72,28 +71,8 @@ public class Team {
         members.put(userId, role);
     }
 
-    public void removeMember(UUID userId) {
-        requireNotArchived();
-        if (!members.containsKey(userId)) {
-            throw new BusinessRuleException("User " + userId + " is not a member of team " + name);
-        }
-        if (members.size() == 1) {
-            throw new BusinessRuleException("Cannot remove the last member of team " + name);
-        }
-        members.remove(userId);
-    }
-
-    public void archive(Instant now) {
-        requireNotArchived();
-        archivedAt = Objects.requireNonNull(now, "now");
-    }
-
     public boolean isArchived() {
         return archivedAt != null;
-    }
-
-    public Optional<TeamRole> roleOf(UUID userId) {
-        return Optional.ofNullable(members.get(userId));
     }
 
     /**

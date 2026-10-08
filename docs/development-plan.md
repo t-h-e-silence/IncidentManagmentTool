@@ -69,7 +69,6 @@ org.example
 | Method | Purpose | Done |
 |---|---|---|
 | `Actor getActiveActor(UUID userId)` | Who is calling: id, name, system role, team ids. Unknown / deactivated / SYSTEM → `UnauthenticatedException` | ✅ |
-| `List<CategoryView> listActiveCategories()` | Categories a reporter can choose | ✅ |
 | `CategoryRouting getRouting(UUID categoryId)` | Category name + responsible team; inactive/unknown → `NotFoundException` | ✅ |
 | `List<TeamView> listTeams()` | All teams (archived included) by name, with active members | ✅ |
 | `TeamView getTeam(UUID teamId)` | Team name + active members; unknown → `NotFoundException` | ✅ |
@@ -87,16 +86,11 @@ Changes take the `Actor`, enforce permissions and the lifecycle, and return `Inc
 | `List<IncidentSummary> listAll()` | every incident, newest first | ✅ |
 | `List<IncidentSummary> listReportedBy(UUID userId)` | newest first | ✅ |
 | `List<IncidentSummary> listByTeam(UUID teamId)` | any status, newest first | ✅ |
-| `List<IncidentSummary> listTeamQueue(UUID teamId)` | active (OPEN, IN_PROGRESS, IN_REVIEW); by severity (SEV1 first), then oldest | ✅ |
 | `CommentView addComment(Actor actor, UUID incidentId, String text)` | owning team member or reporter; active only | ✅ |
 | `IncidentChange updateDetails(Actor actor, UUID incidentId, String title, String description)` | owning team member or reporter; active only; null keeps the value | ✅ |
-| `IncidentChange acknowledge(Actor actor, UUID incidentId)` | team member; OPEN → IN_PROGRESS, sets `acknowledgedAt` | ✅ |
-| `IncidentChange resolve(Actor actor, UUID incidentId, String note)` | team member; IN_REVIEW → RESOLVED; note required | ✅ |
 | `IncidentChange changeStatus(Actor actor, UUID incidentId, IncidentStatus status, String note)` | team member; transitions in `IncidentStatus`: OPEN → IN_PROGRESS → IN_REVIEW → RESOLVED → CLOSED, IN_REVIEW → IN_PROGRESS, RESOLVED → IN_PROGRESS (reopen), OPEN/IN_PROGRESS/IN_REVIEW → CANCELLED; note required to resolve, cancel, reopen; CLOSED and CANCELLED final | ✅ |
-| `IncidentChange changeSeverity(Actor actor, UUID incidentId, Severity severity)` | team member; up or down; active only; same value → `BusinessRuleException` | ✅ |
-| `IncidentChange escalate(Actor actor, UUID incidentId, Severity newSeverity, UUID targetTeamId)` | team member; severity must be **higher**; `targetTeamId` optional, ≠ current (hand-over makes it `OPEN` again). The reason is required by `EscalateCommand` and kept by audit and escalations | ✅ |
-| `IncidentChange deEscalate(Actor actor, UUID incidentId, Severity newSeverity, UUID targetTeamId)` | like `escalate`, but severity must be **lower** | ✅ |
-| `IncidentChange reassign(Actor actor, UUID incidentId, UUID targetTeamId)` | team member or ADMIN; different team; severity unchanged; status back to `OPEN` (the new team has not acknowledged it). The reason is kept in the audit entry and the email | ✅ |
+| `IncidentChange escalate(Actor actor, UUID incidentId, Severity newSeverity, UUID targetTeamId)` | team member; severity must be **higher**; `targetTeamId` optional, ≠ current (hand-over makes it `OPEN` again). The reason is required by `UpdateIncidentCommand` and kept by audit and escalations | ✅ |
+| `IncidentChange deEscalate(Actor actor, UUID incidentId, Severity newSeverity)` | team member; severity must be **lower**; the team keeps the incident (only an escalation hands over) | ✅ |
 
 `Incident` has `@Version`; a concurrent change → `BusinessRuleException("changed concurrently, retry")`.
 
@@ -105,63 +99,39 @@ Changes take the `Actor`, enforce permissions and the lifecycle, and return `Inc
 |---|---|---|
 | `void record(AuditRecord record)` | Append one entry: actor, action (`AuditAction`), entity type + id, incident id, details (jsonb), correlation id, occurredAt. No update/delete methods exist | ✅ |
 | `List<AuditEntryView> getIncidentTimeline(UUID incidentId)` | Oldest first | ✅ |
-| `List<AuditEntryView> getActionsByUser(UUID userId)` | Admin view | ✅ |
 
 ### 2.4 notifications — `NotificationService` (+ `EmailSender`, `EmailDeliveryJob`)
 | Method | Purpose | Done |
 |---|---|---|
 | `void notifyIncident(IncidentNotice notice, List<Recipient> recipients)` | Regular incident emails (created, acknowledged, resolved, reassigned): renders subject/body from its own templates by `NotificationReason`, then `send` | ✅ |
 | `void send(List<EmailMessage> messages)` | Stores one `PENDING` notification per message (recipient, incident id, reason, subject, body) in the caller's transaction. Used by `notifyIncident` and by escalations | ✅ |
-| `List<NotificationView> getForIncident(UUID incidentId)` | Who was told and status | ✅ |
-| `List<NotificationView> getDeadLettered()` | Admin view | ✅ |
-| `NotificationView replay(UUID notificationId)` | DEAD_LETTERED → PENDING, attempts reset | ✅ |
 | `int deliverDue()` | Called by `EmailDeliveryJob` (`@Scheduled`, every 10 s): due PENDING/RETRYING rows (`FOR UPDATE SKIP LOCKED`, batch 50) → `EmailSender` (`JavaMailSender`) → `SENT`, or retry after 1/5/15 min, then `DEAD_LETTERED` + ERROR log | ✅ |
 
 ### 2.5 escalations — `EscalationService` (uses `NotificationService`)
 | Method | Purpose | Done |
 |---|---|---|
-| `EscalationView recordAndNotify(EscalationRecord record, EscalationRecipients recipients)` | Stores the escalation (actor, reason, old/new severity, old/new team) and sends the receiver-specific emails (table above) through `NotificationService.send`. `EscalationRecipients` = new owning team, previous team (if handed over), reporter | ✅ |
-| `List<EscalationView> getEscalations(UUID incidentId)` | Escalations of an incident | ✅ |
+| `void recordAndNotify(EscalationRecord record, EscalationRecipients recipients)` | Stores the escalation (actor, reason, old/new severity, old/new team) and sends the receiver-specific emails (table above) through `NotificationService.send`. `EscalationRecipients` = new owning team, previous team (if handed over), reporter | ✅ |
 
 ---
 
 ## 3. Controller — `IncidentManagementController`
-Every method: `actor = organization.getActiveActor(actorId)`, a new `correlationId` for methods that write, then the steps below, all in **one `@Transactional`**
-(read methods `readOnly`). Private helpers: `audit(...)`, `teamRecipients(...)` (members, or admins if none), `reporterRecipient(...)` (skipped when the reporter is the actor), `union(...)` (no duplicates), `requireAdmin(...)`.
+The only controller: a `@RestController`; every endpoint is one user action in **one `@Transactional`** (reads `readOnly`).
+Each starts with `actor = organization.getActiveActor(actorId)`; the caller comes from the `X-User-Id` header (user id
+or username) via `@ActingUser` / `ActingUserResolver`; errors map to status codes in `HttpErrorHandler`. Writes share
+one `correlationId` per request. Private helpers: `audit(...)`, `teamRecipients(...)` (members, or admins if none),
+`reporterRecipient(...)` (skipped when the reporter is the actor), `union(...)` (no duplicates).
 
-| # | Method | Steps (service calls) | Done |
+| # | Endpoint → method | Steps (service calls) | Done |
 |---|---|---|---|
-| **Organization** ||||
-| 1 | `List<CategoryView> listCategories(UUID actorId)` | `organization.listActiveCategories` | ✅ |
-| 2 | `TeamView getTeam(UUID actorId, UUID teamId)` | `organization.getTeam` | ✅ |
-| 2a | `List<TeamView> listTeams(UUID actorId)` | `organization.listTeams` | ✅ |
-| **Reporting** ||||
-| 3 | `IncidentView reportIncident(UUID actorId, ReportIncidentCommand cmd)` | `organization.getRouting` → `incidents.create` → `audit(INCIDENT_CREATED)` → `notifications.notifyIncident(team members ∨ admins, CREATED)` | ✅ |
-| 4 | `IncidentView getIncident(UUID actorId, UUID incidentId)` | `incidents.get` | ✅ |
-| 5 | `List<IncidentSummary> listMyReportedIncidents(UUID actorId)` | `incidents.listReportedBy` | ✅ |
-| 5a | `List<IncidentSummary> listAllIncidents(UUID actorId)` | `incidents.listAll` | ✅ |
-| 5b | `List<IncidentSummary> listIncidentsReportedBy(UUID actorId, UUID userId)` | `incidents.listReportedBy` | ✅ |
-| 5c | `IncidentView updateIncidentDetails(UUID actorId, UUID incidentId, String title, String description)` | `incidents.updateDetails` → `audit(DETAILS_UPDATED)`; no emails | ✅ |
-| 6 | `CommentView addComment(UUID actorId, UUID incidentId, String text)` | `incidents.addComment` → `audit(COMMENT_ADDED)` | ✅ |
-| **Working an incident** ||||
-| 7 | `List<IncidentSummary> getTeamQueue(UUID actorId, UUID teamId)` | `organization.getTeam` (exists) → `incidents.listTeamQueue` | ✅ |
-| 7a | `List<IncidentSummary> listTeamIncidents(UUID actorId, UUID teamId)` | `organization.getTeam` (exists) → `incidents.listByTeam` | ✅ |
-| 8 | `IncidentView acknowledgeIncident(UUID actorId, UUID incidentId)` | `incidents.acknowledge` → `audit(STATUS_CHANGED)` → `notifyReporter(ACKNOWLEDGED)` | ✅ |
-| 9 | `IncidentView resolveIncident(UUID actorId, UUID incidentId, String note)` | `incidents.resolve` → `audit(STATUS_CHANGED)` → `notifyTeam` + `notifyReporter(RESOLVED)` | ✅ |
-| 9a | `IncidentView changeIncidentStatus(UUID actorId, UUID incidentId, IncidentStatus status, String note)` | `incidents.changeStatus` → `audit(STATUS_CHANGED, note)` → acknowledged: reporter; resolved / reopened / cancelled: team + reporter; review, back to work, close: no emails | ✅ |
-| 10 | `IncidentView changeSeverity(UUID actorId, UUID incidentId, Severity severity)` | `incidents.changeSeverity` → `audit(SEVERITY_CHANGED)` | ✅ |
-| 11 | `IncidentView escalateIncident(UUID actorId, UUID incidentId, EscalateCommand cmd)` | if target team: `organization.requireActiveTeam` → `incidents.escalate` → `audit(ESCALATED)` → `escalations.recordAndNotify(escalationRecipients)` | ✅ |
-| 11a | `IncidentView deEscalateIncident(UUID actorId, UUID incidentId, EscalateCommand cmd)` | like #11 with `incidents.deEscalate` → `audit(DE_ESCALATED)`; the escalation record has direction `DOWN`, emails `INCIDENT_DEESCALATED` | ✅ |
-| 12 | `IncidentView reassignIncident(UUID actorId, UUID incidentId, UUID targetTeamId, String reason)` | `organization.requireActiveTeam` → `incidents.reassign` → `audit(REASSIGNED)` → `notifications.notifyIncident(new team + reporter, REASSIGNED)` | ✅ |
-| **History** ||||
-| 13 | `List<AuditEntryView> getIncidentTimeline(UUID actorId, UUID incidentId)` | `incidents.get` (exists) → `audit.getIncidentTimeline` | ✅ |
-| 14 | `List<NotificationView> getIncidentNotifications(UUID actorId, UUID incidentId)` | `notifications.getForIncident` | ✅ |
-| 15 | `List<EscalationView> getIncidentEscalations(UUID actorId, UUID incidentId)` | `escalations.getEscalations` | ✅ |
-| **Admin (ADMIN only, else `ForbiddenException`)** ||||
-| 16 | `List<NotificationView> listDeadLetteredNotifications(UUID adminId)` | `notifications.getDeadLettered` | ✅ |
-| 17 | `NotificationView replayNotification(UUID adminId, UUID notificationId)` | `notifications.replay` → `audit(NOTIFICATION_REPLAYED)` | ✅ |
-| 18 | `List<AuditEntryView> getUserActivity(UUID adminId, UUID userId)` | `audit.getActionsByUser` | ✅ |
-
+| 1 | `GET /teams` → `listTeams` | `organization.listTeams` | ✅ |
+| 2 | `GET /incidents` → `listAllIncidents` | `incidents.listAll` | ✅ |
+| 2 | `GET /teams/{teamId}/incidents` → `listTeamIncidents` | `organization.getTeam` (exists) → `incidents.listByTeam` | ✅ |
+| 2 | `GET /users/{user}/incidents` → `listUserIncidents` | `organization.findUserId` (else 404) → `incidents.listReportedBy` | ✅ |
+| 3 | `POST /incidents` → `createIncident` | `organization.getRouting` → `incidents.create` → `audit(INCIDENT_CREATED)` → `notifications.notifyIncident(team members ∨ admins, CREATED)` | ✅ |
+| 4 | `PATCH /incidents/{id}` → `updateIncident(UpdateIncidentCommand)` | `incidents.get`, then in order: **details** `incidents.updateDetails` → `audit(DETAILS_UPDATED)`; **severity** up: `organization.requireActiveTeam(target?)` → `incidents.escalate` → `audit(ESCALATED)` → `escalations.recordAndNotify`, down (no target allowed): `incidents.deEscalate` → `audit(DE_ESCALATED)` → `escalations.recordAndNotify`; **status** `incidents.changeStatus` → `audit(STATUS_CHANGED, note)` → acknowledged: reporter; resolved / reopened / cancelled: team + reporter | ✅ |
+| – | `GET /incidents/{id}` → `getIncident` | `incidents.get` | ✅ |
+| – | `POST /incidents/{id}/comments` → `addComment` | `incidents.addComment` → `audit(COMMENT_ADDED)` | ✅ |
+| – | `GET /incidents/{id}/history` → `getIncidentHistory` | `incidents.get` (exists) → `audit.getIncidentTimeline` | ✅ |
 
 ---
 
@@ -174,7 +144,10 @@ Every method: `actor = organization.getActiveActor(actorId)`, a new `correlation
 - [x] **5. escalations (manual)** — `Escalation` (record), `EscalationServiceImpl` with email builder per receiver (§Key definitions) → `NotificationService.send`; Flyway `V501`; `incidents.escalate`; Controller #11, #15; unit tests.
 - [x] **6. admin & wrap-up** — Controller #16–18 (`requireAdmin`); README (run with `seed` profile, seeded users, Mailpit); update `system-design.md` and `c4-model.md` to this design (Controller orchestration, severity only, manual escalation, escalations → notifications).
 
-- [x] **7. HTTP API for Postman** — `spring-boot-starter-web` (drop `keep-alive`); `IncidentManagementHttpController` (one endpoint per Controller method, caller in `X-User-Id`, bodies in `controller/model/HttpRequests`); `HttpErrorHandler` (401/403/404/409/400 as problem details); `postman/IncidentManagement.postman_collection.json`; `@WebMvcTest`.
+- [x] **7. HTTP API for Postman** — `spring-boot-starter-web` (drop `keep-alive`); caller in `X-User-Id` (username or id, `ActingUserResolver`); `HttpErrorHandler` (401/403/404/409/400 as problem details); Postman collections; `@WebMvcTest`.
+- [x] **8. One REST controller** — `IncidentManagementController` is the only controller and a `@RestController` with the agreed endpoints (§3): teams, incident lists (all / team / user), create, one `PATCH` for name, description, severity (escalation with optional hand-over / de-escalation, both emailed) and status; plus view, comment, history. The separate HTTP controller and the other Java entry points are gone.
+
+- [x] **9. Clean-up** — removed what no endpoint uses: categories list, team queue, plain reassign, silent severity change, acknowledge/resolve shortcuts, notification and escalation history, dead letters / replay, user activity, and the admin-only mutators (`Team.archive/removeMember`, `User.deactivate`, `Category.deactivate`). Enum values that may be stored (`AuditAction.SEVERITY_CHANGED/REASSIGNED/NOTIFICATION_REPLAYED`, `NotificationReason.INCIDENT_REASSIGNED`) are kept so existing rows still load.
 
 ### Open (outside the code)
 - [ ] Merge `feature/controller-monolith` into `master`.

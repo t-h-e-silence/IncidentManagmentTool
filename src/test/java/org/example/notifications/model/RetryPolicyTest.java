@@ -14,7 +14,6 @@ class RetryPolicyTest {
     void defaultRetriesAfterOneFiveAndFifteenMinutesThenStops() {
         RetryPolicy policy = RetryPolicy.DEFAULT;
 
-        assertThat(policy.maxAttempts()).isEqualTo(4);
         assertThat(policy.delayAfterFailedAttempt(1)).contains(Duration.ofMinutes(1));
         assertThat(policy.delayAfterFailedAttempt(3)).contains(Duration.ofMinutes(15));
         assertThat(policy.delayAfterFailedAttempt(4)).isEmpty();

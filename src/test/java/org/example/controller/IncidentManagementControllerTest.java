@@ -23,13 +23,16 @@ import org.example.audit.model.AuditRecord;
 import org.example.audit.service.AuditService;
 import org.example.common.exception.BusinessRuleException;
 import org.example.common.exception.ForbiddenException;
+import org.example.common.exception.NotFoundException;
 import org.example.common.exception.UnauthenticatedException;
 import org.example.common.model.Recipient;
 import org.example.common.model.Severity;
-import org.example.controller.model.EscalateCommand;
+import org.example.controller.model.AddCommentCommand;
+import org.example.controller.model.UpdateIncidentCommand;
 import org.example.escalations.model.EscalationRecipients;
 import org.example.escalations.model.EscalationRecord;
 import org.example.escalations.service.EscalationService;
+import org.example.incidents.model.CommentView;
 import org.example.incidents.model.IncidentChange;
 import org.example.incidents.model.IncidentStatus;
 import org.example.incidents.model.IncidentSummary;
@@ -38,8 +41,6 @@ import org.example.incidents.model.ReportIncidentCommand;
 import org.example.incidents.service.IncidentService;
 import org.example.notifications.model.IncidentNotice;
 import org.example.notifications.model.NotificationReason;
-import org.example.notifications.model.NotificationStatus;
-import org.example.notifications.model.NotificationView;
 import org.example.notifications.service.NotificationService;
 import org.example.organization.model.CategoryRouting;
 import org.example.organization.model.TeamView;
@@ -73,7 +74,11 @@ class IncidentManagementControllerTest {
             new ReportIncidentCommand("DB down", "timeouts", DATABASE_CATEGORY, Severity.SEV2);
 
     private IncidentView incident(UUID teamId, IncidentStatus status, Severity severity) {
-        return new IncidentView(incidentId, "DB down", "timeouts", DATABASE_CATEGORY, "Database", teamId, BOB.id(),
+        return incident("DB down", teamId, status, severity);
+    }
+
+    private IncidentView incident(String title, UUID teamId, IncidentStatus status, Severity severity) {
+        return new IncidentView(incidentId, title, "timeouts", DATABASE_CATEGORY, "Database", teamId, BOB.id(),
                 severity, status, NOW, NOW, null, null, null, null, null, List.of());
     }
 
@@ -81,8 +86,58 @@ class IncidentManagementControllerTest {
         when(organization.getTeam(teamId)).thenReturn(new TeamView(teamId, name, false, List.of()));
     }
 
+    private void current(IncidentStatus status, Severity severity) {
+        when(incidents.get(incidentId)).thenReturn(incident(DATABASE, status, severity));
+    }
+
+    private static UpdateIncidentCommand severity(Severity severity, UUID targetTeamId, String reason) {
+        return new UpdateIncidentCommand(null, null, severity, targetTeamId, null, reason);
+    }
+
+    private static UpdateIncidentCommand status(IncidentStatus status, String reason) {
+        return new UpdateIncidentCommand(null, null, null, null, status, reason);
+    }
+
+    private List<AuditRecord> audited(int times) {
+        ArgumentCaptor<AuditRecord> records = ArgumentCaptor.forClass(AuditRecord.class);
+        verify(audit, times(times)).record(records.capture());
+        return records.getAllValues();
+    }
+
+    // ---------------------------------------------------------------- lists
+
     @Test
-    void reportCreatesAuditsAndNotifiesTheTeamInOrder() {
+    void listsTeamsAndIncidents() {
+        when(organization.getActiveActor(BOB.id())).thenReturn(BOB);
+        TeamView database = new TeamView(DATABASE, "Database", false, List.of());
+        when(organization.listTeams()).thenReturn(List.of(database));
+        when(organization.getTeam(DATABASE)).thenReturn(database);
+        when(organization.findUserId("dan")).thenReturn(Optional.of(DAN.id()));
+        IncidentSummary summary = new IncidentSummary(incidentId, "DB down", DATABASE, DAN.id(), Severity.SEV2,
+                IncidentStatus.CLOSED, NOW);
+        when(incidents.listAll()).thenReturn(List.of(summary));
+        when(incidents.listByTeam(DATABASE)).thenReturn(List.of(summary));
+        when(incidents.listReportedBy(DAN.id())).thenReturn(List.of(summary));
+
+        assertThat(controller.listTeams(BOB.id())).containsExactly(database);
+        assertThat(controller.listAllIncidents(BOB.id())).containsExactly(summary);
+        assertThat(controller.listTeamIncidents(BOB.id(), DATABASE)).containsExactly(summary);
+        assertThat(controller.listUserIncidents(BOB.id(), "dan")).containsExactly(summary);
+    }
+
+    @Test
+    void unknownUserInListIsNotFound() {
+        when(organization.getActiveActor(BOB.id())).thenReturn(BOB);
+        when(organization.findUserId("nobody")).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> controller.listUserIncidents(BOB.id(), "nobody"))
+                .isInstanceOf(NotFoundException.class);
+    }
+
+    // ---------------------------------------------------------------- create
+
+    @Test
+    void createAuditsAndNotifiesTheTeamInOrder() {
         when(organization.getActiveActor(BOB.id())).thenReturn(BOB);
         when(organization.getRouting(DATABASE_CATEGORY))
                 .thenReturn(new CategoryRouting(DATABASE_CATEGORY, "Database", DATABASE));
@@ -92,7 +147,7 @@ class IncidentManagementControllerTest {
         List<Recipient> team = List.of(recipient(ALICE), recipient(DAN));
         when(organization.getActiveMembers(DATABASE)).thenReturn(team);
 
-        assertThat(controller.reportIncident(BOB.id(), report)).isEqualTo(created);
+        assertThat(controller.createIncident(BOB.id(), report)).isEqualTo(created);
 
         InOrder order = inOrder(incidents, audit, notifications);
         order.verify(incidents).create(BOB, report, "Database", DATABASE);
@@ -100,12 +155,9 @@ class IncidentManagementControllerTest {
         order.verify(audit).record(record.capture());
         ArgumentCaptor<IncidentNotice> notice = ArgumentCaptor.forClass(IncidentNotice.class);
         order.verify(notifications).notifyIncident(notice.capture(), eq(team));
-
         assertThat(record.getValue().action()).isEqualTo(AuditAction.INCIDENT_CREATED);
         assertThat(record.getValue().actorId()).isEqualTo(BOB.id());
-        assertThat(record.getValue().incidentId()).isEqualTo(incidentId);
         assertThat(notice.getValue().reason()).isEqualTo(NotificationReason.INCIDENT_CREATED);
-        assertThat(notice.getValue().teamName()).isEqualTo("Database");
     }
 
     @Test
@@ -115,7 +167,7 @@ class IncidentManagementControllerTest {
                 .thenReturn(new CategoryRouting(DATABASE_CATEGORY, "Database", DATABASE));
         when(incidents.create(any(), any(), any(), any())).thenThrow(new BusinessRuleException("SEV1 not allowed"));
 
-        assertThatThrownBy(() -> controller.reportIncident(BOB.id(), report)).isInstanceOf(BusinessRuleException.class);
+        assertThatThrownBy(() -> controller.createIncident(BOB.id(), report)).isInstanceOf(BusinessRuleException.class);
 
         verifyNoInteractions(audit, notifications);
     }
@@ -125,7 +177,7 @@ class IncidentManagementControllerTest {
         UUID stranger = UUID.randomUUID();
         when(organization.getActiveActor(stranger)).thenThrow(new UnauthenticatedException("unknown"));
 
-        assertThatThrownBy(() -> controller.reportIncident(stranger, report))
+        assertThatThrownBy(() -> controller.createIncident(stranger, report))
                 .isInstanceOf(UnauthenticatedException.class);
 
         verifyNoInteractions(incidents, audit, notifications);
@@ -142,211 +194,43 @@ class IncidentManagementControllerTest {
         when(organization.getActiveMembers(DATABASE)).thenReturn(List.of());
         when(organization.getActiveAdmins()).thenReturn(List.of(recipient(ADA)));
 
-        controller.reportIncident(BOB.id(), report);
+        controller.createIncident(BOB.id(), report);
 
         verify(notifications).notifyIncident(any(), eq(List.of(recipient(ADA))));
     }
 
-    @Test
-    void acknowledgeNotifiesOnlyTheReporter() {
-        when(organization.getActiveActor(DAN.id())).thenReturn(DAN);
-        when(incidents.acknowledge(DAN, incidentId)).thenReturn(new IncidentChange(
-                incident(DATABASE, IncidentStatus.OPEN, Severity.SEV2),
-                incident(DATABASE, IncidentStatus.IN_PROGRESS, Severity.SEV2)));
-        teamName(DATABASE, "Database");
-        when(organization.findRecipient(BOB.id())).thenReturn(Optional.of(recipient(BOB)));
-
-        controller.acknowledgeIncident(DAN.id(), incidentId);
-
-        ArgumentCaptor<AuditRecord> record = ArgumentCaptor.forClass(AuditRecord.class);
-        verify(audit).record(record.capture());
-        assertThat(record.getValue().details()).containsEntry("from", "OPEN").containsEntry("to", "IN_PROGRESS");
-        ArgumentCaptor<IncidentNotice> notice = ArgumentCaptor.forClass(IncidentNotice.class);
-        verify(notifications).notifyIncident(notice.capture(),
-                eq(List.of(recipient(BOB))));
-        assertThat(notice.getValue().reason()).isEqualTo(NotificationReason.INCIDENT_ACKNOWLEDGED);
-    }
+    // ---------------------------------------------------------------- update: details
 
     @Test
-    void resolveNotifiesTeamAndReporterOnce() {
-        when(organization.getActiveActor(DAN.id())).thenReturn(DAN);
-        when(incidents.resolve(DAN, incidentId, "fixed")).thenReturn(new IncidentChange(
-                incident(DATABASE, IncidentStatus.IN_PROGRESS, Severity.SEV2),
-                incident(DATABASE, IncidentStatus.RESOLVED, Severity.SEV2)));
-        teamName(DATABASE, "Database");
-        // the reporter is also in the team: emailed once
-        when(organization.getActiveMembers(DATABASE)).thenReturn(List.of(recipient(DAN), recipient(BOB)));
-        when(organization.findRecipient(BOB.id())).thenReturn(Optional.of(recipient(BOB)));
-
-        controller.resolveIncident(DAN.id(), incidentId, "fixed");
-
-        verify(notifications).notifyIncident(any(),
-                eq(List.of(recipient(DAN), recipient(BOB))));
-    }
-
-    @Test
-    void cancelIsAuditedWithItsReasonAndNotifiesTeamAndReporter() {
-        when(organization.getActiveActor(DAN.id())).thenReturn(DAN);
-        when(incidents.changeStatus(DAN, incidentId, IncidentStatus.CANCELLED, "duplicate"))
-                .thenReturn(new IncidentChange(
-                        incident(DATABASE, IncidentStatus.IN_PROGRESS, Severity.SEV2),
-                        incident(DATABASE, IncidentStatus.CANCELLED, Severity.SEV2)));
-        teamName(DATABASE, "Database");
-        when(organization.getActiveMembers(DATABASE)).thenReturn(List.of(recipient(ALICE), recipient(DAN)));
-        when(organization.findRecipient(BOB.id())).thenReturn(Optional.of(recipient(BOB)));
-
-        controller.changeIncidentStatus(DAN.id(), incidentId, IncidentStatus.CANCELLED, "duplicate");
-
-        ArgumentCaptor<AuditRecord> record = ArgumentCaptor.forClass(AuditRecord.class);
-        verify(audit).record(record.capture());
-        assertThat(record.getValue().action()).isEqualTo(AuditAction.STATUS_CHANGED);
-        assertThat(record.getValue().details()).containsEntry("to", "CANCELLED").containsEntry("note", "duplicate");
-        ArgumentCaptor<IncidentNotice> notice = ArgumentCaptor.forClass(IncidentNotice.class);
-        verify(notifications).notifyIncident(notice.capture(),
-                eq(List.of(recipient(ALICE), recipient(DAN), recipient(BOB))));
-        assertThat(notice.getValue().reason()).isEqualTo(NotificationReason.INCIDENT_CANCELLED);
-    }
-
-    @Test
-    void reviewAndCloseAreAuditedWithoutEmails() {
-        when(organization.getActiveActor(DAN.id())).thenReturn(DAN);
-        when(incidents.changeStatus(DAN, incidentId, IncidentStatus.IN_REVIEW, null)).thenReturn(new IncidentChange(
-                incident(DATABASE, IncidentStatus.IN_PROGRESS, Severity.SEV2),
-                incident(DATABASE, IncidentStatus.IN_REVIEW, Severity.SEV2)));
-        when(incidents.changeStatus(DAN, incidentId, IncidentStatus.CLOSED, null)).thenReturn(new IncidentChange(
-                incident(DATABASE, IncidentStatus.RESOLVED, Severity.SEV2),
-                incident(DATABASE, IncidentStatus.CLOSED, Severity.SEV2)));
-
-        controller.changeIncidentStatus(DAN.id(), incidentId, IncidentStatus.IN_REVIEW, null);
-        controller.changeIncidentStatus(DAN.id(), incidentId, IncidentStatus.CLOSED, null);
-
-        verify(audit, times(2)).record(any());
-        verifyNoInteractions(notifications);
-    }
-
-    @Test
-    void reopenNotifiesTeamAndReporter() {
-        when(organization.getActiveActor(DAN.id())).thenReturn(DAN);
-        when(incidents.changeStatus(DAN, incidentId, IncidentStatus.IN_PROGRESS, "came back"))
-                .thenReturn(new IncidentChange(
-                        incident(DATABASE, IncidentStatus.RESOLVED, Severity.SEV2),
-                        incident(DATABASE, IncidentStatus.IN_PROGRESS, Severity.SEV2)));
-        teamName(DATABASE, "Database");
-        when(organization.getActiveMembers(DATABASE)).thenReturn(List.of(recipient(DAN)));
-        when(organization.findRecipient(BOB.id())).thenReturn(Optional.of(recipient(BOB)));
-
-        controller.changeIncidentStatus(DAN.id(), incidentId, IncidentStatus.IN_PROGRESS, "came back");
-
-        ArgumentCaptor<IncidentNotice> notice = ArgumentCaptor.forClass(IncidentNotice.class);
-        verify(notifications).notifyIncident(notice.capture(), eq(List.of(recipient(DAN), recipient(BOB))));
-        assertThat(notice.getValue().reason()).isEqualTo(NotificationReason.INCIDENT_REOPENED);
-        assertThat(notice.getValue().note()).isEqualTo("came back");
-    }
-
-    @Test
-    void detailsUpdateIsAuditedWithoutEmails() {
+    void titleUpdateIsAuditedWithoutEmails() {
         when(organization.getActiveActor(BOB.id())).thenReturn(BOB);
-        IncidentView before = incident(DATABASE, IncidentStatus.OPEN, Severity.SEV2);
-        IncidentView after = new IncidentView(incidentId, "Primary DB down", "timeouts", DATABASE_CATEGORY,
-                "Database", DATABASE, BOB.id(), Severity.SEV2, IncidentStatus.OPEN, NOW, NOW, null, null, null, null,
-                null, List.of());
+        current(IncidentStatus.OPEN, Severity.SEV2);
+        IncidentView after = incident("Primary DB down", DATABASE, IncidentStatus.OPEN, Severity.SEV2);
         when(incidents.updateDetails(BOB, incidentId, "Primary DB down", null))
-                .thenReturn(new IncidentChange(before, after));
+                .thenReturn(new IncidentChange(incident(DATABASE, IncidentStatus.OPEN, Severity.SEV2), after));
 
-        assertThat(controller.updateIncidentDetails(BOB.id(), incidentId, "Primary DB down", null)).isEqualTo(after);
+        assertThat(controller.updateIncident(BOB.id(), incidentId,
+                new UpdateIncidentCommand("Primary DB down", null, null, null, null, null))).isEqualTo(after);
 
-        ArgumentCaptor<AuditRecord> record = ArgumentCaptor.forClass(AuditRecord.class);
-        verify(audit).record(record.capture());
-        assertThat(record.getValue().action()).isEqualTo(AuditAction.DETAILS_UPDATED);
-        assertThat(record.getValue().details()).containsEntry("fromTitle", "DB down")
-                .containsEntry("toTitle", "Primary DB down").containsEntry("descriptionChanged", "false");
-        verifyNoInteractions(notifications);
+        AuditRecord record = audited(1).get(0);
+        assertThat(record.action()).isEqualTo(AuditAction.DETAILS_UPDATED);
+        assertThat(record.details()).containsEntry("fromTitle", "DB down").containsEntry("toTitle", "Primary DB down")
+                .containsEntry("descriptionChanged", "false");
+        verifyNoInteractions(notifications, escalations);
     }
 
     @Test
-    void listsTeamsAndIncidents() {
-        when(organization.getActiveActor(BOB.id())).thenReturn(BOB);
-        TeamView database = new TeamView(DATABASE, "Database", false, List.of());
-        when(organization.listTeams()).thenReturn(List.of(database));
-        when(organization.getTeam(DATABASE)).thenReturn(database);
-        IncidentSummary summary = new IncidentSummary(incidentId, "DB down", DATABASE, DAN.id(), Severity.SEV2,
-                IncidentStatus.CLOSED, NOW);
-        when(incidents.listAll()).thenReturn(List.of(summary));
-        when(incidents.listByTeam(DATABASE)).thenReturn(List.of(summary));
-        when(incidents.listReportedBy(DAN.id())).thenReturn(List.of(summary));
-
-        assertThat(controller.listTeams(BOB.id())).containsExactly(database);
-        assertThat(controller.listAllIncidents(BOB.id())).containsExactly(summary);
-        assertThat(controller.listTeamIncidents(BOB.id(), DATABASE)).containsExactly(summary);
-        assertThat(controller.listIncidentsReportedBy(BOB.id(), DAN.id())).containsExactly(summary);
+    void emptyUpdateIsRejected() {
+        assertThatThrownBy(() -> new UpdateIncidentCommand(null, null, null, null, null, "why"))
+                .isInstanceOf(IllegalArgumentException.class);
     }
 
+    // ---------------------------------------------------------------- update: severity
+
     @Test
-    void changeSeverityIsAuditedWithoutEmails() {
+    void raisingSeverityEscalatesWithHandOver() {
         when(organization.getActiveActor(DAN.id())).thenReturn(DAN);
-        when(incidents.changeSeverity(DAN, incidentId, Severity.SEV3)).thenReturn(new IncidentChange(
-                incident(DATABASE, IncidentStatus.OPEN, Severity.SEV2),
-                incident(DATABASE, IncidentStatus.OPEN, Severity.SEV3)));
-
-        controller.changeSeverity(DAN.id(), incidentId, Severity.SEV3);
-
-        ArgumentCaptor<AuditRecord> record = ArgumentCaptor.forClass(AuditRecord.class);
-        verify(audit).record(record.capture());
-        assertThat(record.getValue().action()).isEqualTo(AuditAction.SEVERITY_CHANGED);
-        assertThat(record.getValue().details()).containsEntry("from", "SEV2").containsEntry("to", "SEV3");
-        verifyNoInteractions(notifications);
-    }
-
-    @Test
-    void reassignChecksTargetTeamFirstAndNotifiesNewTeam() {
-        when(organization.getActiveActor(ALICE.id())).thenReturn(ALICE);
-        when(incidents.reassign(ALICE, incidentId, PLATFORM)).thenReturn(new IncidentChange(
-                incident(DATABASE, IncidentStatus.IN_PROGRESS, Severity.SEV2),
-                incident(PLATFORM, IncidentStatus.OPEN, Severity.SEV2)));
-        teamName(PLATFORM, "Platform");
-        when(organization.getActiveMembers(PLATFORM)).thenReturn(List.of(recipient(CAROL)));
-        when(organization.findRecipient(BOB.id())).thenReturn(Optional.of(recipient(BOB)));
-
-        controller.reassignIncident(ALICE.id(), incidentId, PLATFORM, "payments side");
-
-        InOrder order = inOrder(organization, incidents);
-        order.verify(organization).requireActiveTeam(PLATFORM);
-        order.verify(incidents).reassign(ALICE, incidentId, PLATFORM);
-        ArgumentCaptor<IncidentNotice> notice = ArgumentCaptor.forClass(IncidentNotice.class);
-        verify(notifications).notifyIncident(notice.capture(),
-                eq(List.of(recipient(CAROL), recipient(BOB))));
-        assertThat(notice.getValue().teamName()).isEqualTo("Platform");
-        assertThat(notice.getValue().note()).isEqualTo("payments side");
-    }
-
-    @Test
-    void reassignToInactiveTeamChangesNothing() {
-        when(organization.getActiveActor(ALICE.id())).thenReturn(ALICE);
-        doThrow(new BusinessRuleException("archived"))
-                .when(organization).requireActiveTeam(PLATFORM);
-
-        assertThatThrownBy(() -> controller.reassignIncident(ALICE.id(), incidentId, PLATFORM, "x"))
-                .isInstanceOf(BusinessRuleException.class);
-
-        verifyNoInteractions(incidents, audit, notifications);
-    }
-
-    @Test
-    void forbiddenChangeIsNeitherAuditedNorNotified() {
-        when(organization.getActiveActor(CAROL.id())).thenReturn(CAROL);
-        when(incidents.acknowledge(CAROL, incidentId)).thenThrow(new ForbiddenException("not your team"));
-
-        assertThatThrownBy(() -> controller.acknowledgeIncident(CAROL.id(), incidentId))
-                .isInstanceOf(ForbiddenException.class);
-
-        verify(audit, never()).record(any());
-        verify(notifications, never()).notifyIncident(any(), anyList());
-    }
-
-    @Test
-    void escalationWithHandOverAuditsThenLetsEscalationsEmail() {
-        when(organization.getActiveActor(DAN.id())).thenReturn(DAN);
-        EscalateCommand command = new EscalateCommand(Severity.SEV1, PLATFORM, "replica lag growing");
+        current(IncidentStatus.IN_PROGRESS, Severity.SEV3);
         when(incidents.escalate(DAN, incidentId, Severity.SEV1, PLATFORM)).thenReturn(new IncidentChange(
                 incident(DATABASE, IncidentStatus.IN_PROGRESS, Severity.SEV3),
                 incident(PLATFORM, IncidentStatus.OPEN, Severity.SEV1)));
@@ -356,7 +240,8 @@ class IncidentManagementControllerTest {
         when(organization.getActiveMembers(DATABASE)).thenReturn(List.of(recipient(ALICE), recipient(DAN)));
         when(organization.findRecipient(BOB.id())).thenReturn(Optional.of(recipient(BOB)));
 
-        IncidentView result = controller.escalateIncident(DAN.id(), incidentId, command);
+        IncidentView result = controller.updateIncident(DAN.id(), incidentId,
+                severity(Severity.SEV1, PLATFORM, "replica lag growing"));
 
         assertThat(result.teamId()).isEqualTo(PLATFORM);
         InOrder order = inOrder(organization, incidents, audit, escalations);
@@ -373,7 +258,6 @@ class IncidentManagementControllerTest {
                 .containsEntry("toSeverity", "SEV1").containsEntry("reason", "replica lag growing");
         assertThat(escalation.getValue().fromTeamName()).isEqualTo("Database");
         assertThat(escalation.getValue().toTeamName()).isEqualTo("Platform");
-        assertThat(escalation.getValue().actorName()).isEqualTo("Dan Dba");
         assertThat(recipients.getValue().owningTeam()).containsExactly(recipient(CAROL));
         assertThat(recipients.getValue().previousTeam()).containsExactly(recipient(ALICE), recipient(DAN));
         assertThat(recipients.getValue().reporter()).contains(recipient(BOB));
@@ -381,8 +265,9 @@ class IncidentManagementControllerTest {
     }
 
     @Test
-    void escalationWithinTheTeamHasNoPreviousTeam() {
+    void raisingSeverityWithinTheTeamHasNoPreviousTeam() {
         when(organization.getActiveActor(DAN.id())).thenReturn(DAN);
+        current(IncidentStatus.IN_PROGRESS, Severity.SEV2);
         when(incidents.escalate(DAN, incidentId, Severity.SEV1, null)).thenReturn(new IncidentChange(
                 incident(DATABASE, IncidentStatus.IN_PROGRESS, Severity.SEV2),
                 incident(DATABASE, IncidentStatus.IN_PROGRESS, Severity.SEV1)));
@@ -390,32 +275,28 @@ class IncidentManagementControllerTest {
         when(organization.getActiveMembers(DATABASE)).thenReturn(List.of(recipient(ALICE), recipient(DAN)));
         when(organization.findRecipient(BOB.id())).thenReturn(Optional.empty());
 
-        controller.escalateIncident(DAN.id(), incidentId, new EscalateCommand(Severity.SEV1, null, "worse"));
+        controller.updateIncident(DAN.id(), incidentId, severity(Severity.SEV1, null, "worse"));
 
         ArgumentCaptor<EscalationRecipients> recipients = ArgumentCaptor.forClass(EscalationRecipients.class);
         verify(escalations).recordAndNotify(any(), recipients.capture());
         assertThat(recipients.getValue().previousTeam()).isEmpty();
-        assertThat(recipients.getValue().reporter()).isEmpty();
         verify(organization, never()).requireActiveTeam(any());
     }
 
     @Test
-    void deEscalationIsAuditedAndRecordedLikeAnEscalation() {
+    void loweringSeverityDeEscalatesAndEmails() {
         when(organization.getActiveActor(DAN.id())).thenReturn(DAN);
-        when(incidents.deEscalate(DAN, incidentId, Severity.SEV3, null)).thenReturn(new IncidentChange(
+        current(IncidentStatus.IN_PROGRESS, Severity.SEV1);
+        when(incidents.deEscalate(DAN, incidentId, Severity.SEV3)).thenReturn(new IncidentChange(
                 incident(DATABASE, IncidentStatus.IN_PROGRESS, Severity.SEV1),
                 incident(DATABASE, IncidentStatus.IN_PROGRESS, Severity.SEV3)));
         teamName(DATABASE, "Database");
         when(organization.getActiveMembers(DATABASE)).thenReturn(List.of(recipient(ALICE), recipient(DAN)));
         when(organization.findRecipient(BOB.id())).thenReturn(Optional.of(recipient(BOB)));
 
-        controller.deEscalateIncident(DAN.id(), incidentId, new EscalateCommand(Severity.SEV3, null, "contained"));
+        controller.updateIncident(DAN.id(), incidentId, severity(Severity.SEV3, null, "contained"));
 
-        ArgumentCaptor<AuditRecord> record = ArgumentCaptor.forClass(AuditRecord.class);
-        verify(audit).record(record.capture());
-        assertThat(record.getValue().action()).isEqualTo(AuditAction.DE_ESCALATED);
-        assertThat(record.getValue().details()).containsEntry("fromSeverity", "SEV1")
-                .containsEntry("toSeverity", "SEV3");
+        assertThat(audited(1).get(0).action()).isEqualTo(AuditAction.DE_ESCALATED);
         ArgumentCaptor<EscalationRecord> escalation = ArgumentCaptor.forClass(EscalationRecord.class);
         verify(escalations).recordAndNotify(escalation.capture(), any());
         assertThat(escalation.getValue().reason()).isEqualTo("contained");
@@ -423,68 +304,203 @@ class IncidentManagementControllerTest {
     }
 
     @Test
-    void escalationWithoutReasonIsRejectedBeforeAnything() {
-        assertThatThrownBy(() -> new EscalateCommand(Severity.SEV1, null, "  "))
+    void deEscalationCannotHandOver() {
+        when(organization.getActiveActor(DAN.id())).thenReturn(DAN);
+        current(IncidentStatus.IN_PROGRESS, Severity.SEV1);
+
+        assertThatThrownBy(() -> controller.updateIncident(DAN.id(), incidentId,
+                severity(Severity.SEV3, PLATFORM, "contained"))).isInstanceOf(BusinessRuleException.class);
+
+        verify(incidents, never()).deEscalate(any(), any(), any());
+        verifyNoInteractions(audit, escalations);
+    }
+
+    @Test
+    void sameSeverityIsRejected() {
+        when(organization.getActiveActor(DAN.id())).thenReturn(DAN);
+        current(IncidentStatus.IN_PROGRESS, Severity.SEV2);
+
+        assertThatThrownBy(() -> controller.updateIncident(DAN.id(), incidentId, severity(Severity.SEV2, null, "x")))
+                .isInstanceOf(BusinessRuleException.class);
+
+        verifyNoInteractions(audit, escalations);
+    }
+
+    @Test
+    void severityNeedsAReasonAndHandOverNeedsASeverity() {
+        assertThatThrownBy(() -> severity(Severity.SEV1, null, " ")).isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> new UpdateIncidentCommand(null, null, null, PLATFORM, null, "move"))
                 .isInstanceOf(IllegalArgumentException.class);
     }
 
     @Test
     void refusedEscalationIsNeitherAuditedNorEmailed() {
         when(organization.getActiveActor(CAROL.id())).thenReturn(CAROL);
+        current(IncidentStatus.OPEN, Severity.SEV2);
         when(incidents.escalate(CAROL, incidentId, Severity.SEV1, null)).thenThrow(new ForbiddenException("no"));
 
-        assertThatThrownBy(() -> controller.escalateIncident(CAROL.id(), incidentId,
-                new EscalateCommand(Severity.SEV1, null, "urgent"))).isInstanceOf(ForbiddenException.class);
+        assertThatThrownBy(() -> controller.updateIncident(CAROL.id(), incidentId,
+                severity(Severity.SEV1, null, "urgent"))).isInstanceOf(ForbiddenException.class);
 
         verifyNoInteractions(audit, escalations, notifications);
     }
 
-    @Test
-    void adminFunctionsRejectNonAdmins() {
-        when(organization.getActiveActor(ALICE.id())).thenReturn(ALICE);
+    // ---------------------------------------------------------------- update: status
 
-        assertThatThrownBy(() -> controller.listDeadLetteredNotifications(ALICE.id()))
-                .isInstanceOf(ForbiddenException.class);
-        assertThatThrownBy(() -> controller.replayNotification(ALICE.id(), UUID.randomUUID()))
-                .isInstanceOf(ForbiddenException.class);
-        assertThatThrownBy(() -> controller.getUserActivity(ALICE.id(), BOB.id()))
-                .isInstanceOf(ForbiddenException.class);
-        verifyNoInteractions(notifications, audit);
+    @Test
+    void acknowledgeNotifiesOnlyTheReporter() {
+        when(organization.getActiveActor(DAN.id())).thenReturn(DAN);
+        current(IncidentStatus.OPEN, Severity.SEV2);
+        when(incidents.changeStatus(DAN, incidentId, IncidentStatus.IN_PROGRESS, null)).thenReturn(new IncidentChange(
+                incident(DATABASE, IncidentStatus.OPEN, Severity.SEV2),
+                incident(DATABASE, IncidentStatus.IN_PROGRESS, Severity.SEV2)));
+        teamName(DATABASE, "Database");
+        when(organization.findRecipient(BOB.id())).thenReturn(Optional.of(recipient(BOB)));
+
+        controller.updateIncident(DAN.id(), incidentId, status(IncidentStatus.IN_PROGRESS, null));
+
+        assertThat(audited(1).get(0).details()).containsEntry("from", "OPEN").containsEntry("to", "IN_PROGRESS");
+        ArgumentCaptor<IncidentNotice> notice = ArgumentCaptor.forClass(IncidentNotice.class);
+        verify(notifications).notifyIncident(notice.capture(), eq(List.of(recipient(BOB))));
+        assertThat(notice.getValue().reason()).isEqualTo(NotificationReason.INCIDENT_ACKNOWLEDGED);
     }
 
     @Test
-    void replayIsAuditedOnTheIncidentTimeline() {
-        when(organization.getActiveActor(ADA.id())).thenReturn(ADA);
-        UUID notificationId = UUID.randomUUID();
-        NotificationView replayed = new NotificationView(notificationId, incidentId, DAN.id(), "dan@example.com",
-                NotificationReason.INCIDENT_CREATED, "subject", NotificationStatus.PENDING, 0, NOW, null, NOW, null);
-        when(notifications.replay(notificationId)).thenReturn(replayed);
+    void cancelIsAuditedWithItsReasonAndNotifiesTeamAndReporter() {
+        when(organization.getActiveActor(DAN.id())).thenReturn(DAN);
+        current(IncidentStatus.IN_PROGRESS, Severity.SEV2);
+        when(incidents.changeStatus(DAN, incidentId, IncidentStatus.CANCELLED, "duplicate"))
+                .thenReturn(new IncidentChange(
+                        incident(DATABASE, IncidentStatus.IN_PROGRESS, Severity.SEV2),
+                        incident(DATABASE, IncidentStatus.CANCELLED, Severity.SEV2)));
+        teamName(DATABASE, "Database");
+        // the reporter is also emailed, once
+        when(organization.getActiveMembers(DATABASE)).thenReturn(List.of(recipient(ALICE), recipient(DAN)));
+        when(organization.findRecipient(BOB.id())).thenReturn(Optional.of(recipient(BOB)));
 
-        assertThat(controller.replayNotification(ADA.id(), notificationId)).isEqualTo(replayed);
+        controller.updateIncident(DAN.id(), incidentId, status(IncidentStatus.CANCELLED, "duplicate"));
 
-        ArgumentCaptor<AuditRecord> record = ArgumentCaptor.forClass(AuditRecord.class);
-        verify(audit).record(record.capture());
-        assertThat(record.getValue().action()).isEqualTo(AuditAction.NOTIFICATION_REPLAYED);
-        assertThat(record.getValue().actorId()).isEqualTo(ADA.id());
-        assertThat(record.getValue().entityId()).isEqualTo(notificationId);
-        assertThat(record.getValue().incidentId()).isEqualTo(incidentId);
+        assertThat(audited(1).get(0).details()).containsEntry("to", "CANCELLED").containsEntry("note", "duplicate");
+        ArgumentCaptor<IncidentNotice> notice = ArgumentCaptor.forClass(IncidentNotice.class);
+        verify(notifications).notifyIncident(notice.capture(),
+                eq(List.of(recipient(ALICE), recipient(DAN), recipient(BOB))));
+        assertThat(notice.getValue().reason()).isEqualTo(NotificationReason.INCIDENT_CANCELLED);
     }
 
     @Test
-    void adminSeesUserActivity() {
-        when(organization.getActiveActor(ADA.id())).thenReturn(ADA);
-        when(audit.getActionsByUser(BOB.id())).thenReturn(List.of());
+    void reopenNotifiesTeamAndReporter() {
+        when(organization.getActiveActor(DAN.id())).thenReturn(DAN);
+        current(IncidentStatus.RESOLVED, Severity.SEV2);
+        when(incidents.changeStatus(DAN, incidentId, IncidentStatus.IN_PROGRESS, "came back"))
+                .thenReturn(new IncidentChange(
+                        incident(DATABASE, IncidentStatus.RESOLVED, Severity.SEV2),
+                        incident(DATABASE, IncidentStatus.IN_PROGRESS, Severity.SEV2)));
+        teamName(DATABASE, "Database");
+        when(organization.getActiveMembers(DATABASE)).thenReturn(List.of(recipient(DAN)));
+        when(organization.findRecipient(BOB.id())).thenReturn(Optional.of(recipient(BOB)));
 
-        assertThat(controller.getUserActivity(ADA.id(), BOB.id())).isEmpty();
+        controller.updateIncident(DAN.id(), incidentId, status(IncidentStatus.IN_PROGRESS, "came back"));
+
+        ArgumentCaptor<IncidentNotice> notice = ArgumentCaptor.forClass(IncidentNotice.class);
+        verify(notifications).notifyIncident(notice.capture(), eq(List.of(recipient(DAN), recipient(BOB))));
+        assertThat(notice.getValue().reason()).isEqualTo(NotificationReason.INCIDENT_REOPENED);
     }
 
     @Test
-    void timelineChecksTheIncidentExists() {
+    void reviewAndCloseAreAuditedWithoutEmails() {
+        when(organization.getActiveActor(DAN.id())).thenReturn(DAN);
+        current(IncidentStatus.IN_PROGRESS, Severity.SEV2);
+        when(incidents.changeStatus(DAN, incidentId, IncidentStatus.IN_REVIEW, null)).thenReturn(new IncidentChange(
+                incident(DATABASE, IncidentStatus.IN_PROGRESS, Severity.SEV2),
+                incident(DATABASE, IncidentStatus.IN_REVIEW, Severity.SEV2)));
+        when(incidents.changeStatus(DAN, incidentId, IncidentStatus.CLOSED, null)).thenReturn(new IncidentChange(
+                incident(DATABASE, IncidentStatus.RESOLVED, Severity.SEV2),
+                incident(DATABASE, IncidentStatus.CLOSED, Severity.SEV2)));
+
+        controller.updateIncident(DAN.id(), incidentId, status(IncidentStatus.IN_REVIEW, null));
+        controller.updateIncident(DAN.id(), incidentId, status(IncidentStatus.CLOSED, null));
+
+        audited(2);
+        verifyNoInteractions(notifications);
+    }
+
+    // ---------------------------------------------------------------- update: combined
+
+    @Test
+    void combinedUpdateRunsDetailsThenSeverityThenStatusWithOneCorrelationId() {
+        when(organization.getActiveActor(DAN.id())).thenReturn(DAN);
+        current(IncidentStatus.OPEN, Severity.SEV3);
+        when(incidents.updateDetails(DAN, incidentId, "Primary DB down", null)).thenReturn(new IncidentChange(
+                incident(DATABASE, IncidentStatus.OPEN, Severity.SEV3),
+                incident("Primary DB down", DATABASE, IncidentStatus.OPEN, Severity.SEV3)));
+        when(incidents.escalate(DAN, incidentId, Severity.SEV2, null)).thenReturn(new IncidentChange(
+                incident("Primary DB down", DATABASE, IncidentStatus.OPEN, Severity.SEV3),
+                incident("Primary DB down", DATABASE, IncidentStatus.OPEN, Severity.SEV2)));
+        when(incidents.changeStatus(DAN, incidentId, IncidentStatus.IN_PROGRESS, "worse")).thenReturn(
+                new IncidentChange(incident("Primary DB down", DATABASE, IncidentStatus.OPEN, Severity.SEV2),
+                        incident("Primary DB down", DATABASE, IncidentStatus.IN_PROGRESS, Severity.SEV2)));
+        teamName(DATABASE, "Database");
+        when(organization.getActiveMembers(DATABASE)).thenReturn(List.of(recipient(DAN)));
+        when(organization.findRecipient(BOB.id())).thenReturn(Optional.of(recipient(BOB)));
+
+        IncidentView result = controller.updateIncident(DAN.id(), incidentId, new UpdateIncidentCommand(
+                "Primary DB down", null, Severity.SEV2, null, IncidentStatus.IN_PROGRESS, "worse"));
+
+        assertThat(result.status()).isEqualTo(IncidentStatus.IN_PROGRESS);
+        InOrder order = inOrder(incidents);
+        order.verify(incidents).updateDetails(DAN, incidentId, "Primary DB down", null);
+        order.verify(incidents).escalate(DAN, incidentId, Severity.SEV2, null);
+        order.verify(incidents).changeStatus(DAN, incidentId, IncidentStatus.IN_PROGRESS, "worse");
+        List<AuditRecord> records = audited(3);
+        assertThat(records).extracting(AuditRecord::action).containsExactly(AuditAction.DETAILS_UPDATED,
+                AuditAction.ESCALATED, AuditAction.STATUS_CHANGED);
+        assertThat(records).extracting(AuditRecord::correlationId).containsOnly(records.get(0).correlationId());
+    }
+
+    // ---------------------------------------------------------------- comment, view, history
+
+    @Test
+    void commentIsAudited() {
         when(organization.getActiveActor(BOB.id())).thenReturn(BOB);
-        when(incidents.get(incidentId)).thenReturn(incident(DATABASE, IncidentStatus.OPEN, Severity.SEV2));
+        CommentView comment = new CommentView(UUID.randomUUID(), incidentId, BOB.id(), "more details", NOW);
+        when(incidents.addComment(BOB, incidentId, "more details")).thenReturn(comment);
+
+        assertThat(controller.addComment(BOB.id(), incidentId, new AddCommentCommand("more details")))
+                .isEqualTo(comment);
+
+        assertThat(audited(1).get(0).action()).isEqualTo(AuditAction.COMMENT_ADDED);
+    }
+
+    @Test
+    void historyChecksTheIncidentExists() {
+        when(organization.getActiveActor(BOB.id())).thenReturn(BOB);
+        current(IncidentStatus.OPEN, Severity.SEV2);
         when(audit.getIncidentTimeline(incidentId)).thenReturn(List.of());
 
-        assertThat(controller.getIncidentTimeline(BOB.id(), incidentId)).isEmpty();
+        assertThat(controller.getIncidentHistory(BOB.id(), incidentId)).isEmpty();
         verify(incidents).get(incidentId);
+    }
+
+    @Test
+    void historyOfUnknownIncidentIsNotFound() {
+        when(organization.getActiveActor(BOB.id())).thenReturn(BOB);
+        when(incidents.get(incidentId)).thenThrow(new NotFoundException("no"));
+
+        assertThatThrownBy(() -> controller.getIncidentHistory(BOB.id(), incidentId))
+                .isInstanceOf(NotFoundException.class);
+        verifyNoInteractions(audit);
+    }
+
+    @Test
+    void escalationToInactiveTeamChangesNothing() {
+        when(organization.getActiveActor(DAN.id())).thenReturn(DAN);
+        current(IncidentStatus.OPEN, Severity.SEV2);
+        doThrow(new BusinessRuleException("archived")).when(organization).requireActiveTeam(PLATFORM);
+
+        assertThatThrownBy(() -> controller.updateIncident(DAN.id(), incidentId,
+                severity(Severity.SEV1, PLATFORM, "x"))).isInstanceOf(BusinessRuleException.class);
+
+        verify(incidents, never()).escalate(any(), any(), any(), any());
+        verifyNoInteractions(audit, escalations, notifications);
     }
 }

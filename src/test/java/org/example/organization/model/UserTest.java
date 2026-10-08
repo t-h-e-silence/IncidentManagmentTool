@@ -3,12 +3,11 @@ package org.example.organization.model;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
-import java.time.Instant;
 import java.util.UUID;
 
-import org.example.common.exception.BusinessRuleException;
 import org.example.common.model.SystemRole;
 import org.junit.jupiter.api.Test;
+import org.springframework.test.util.ReflectionTestUtils;
 
 class UserTest {
 
@@ -36,10 +35,9 @@ class UserTest {
     void deactivatedUserCannotAct() {
         User user = user("alice@example.com");
 
-        user.deactivate(Instant.now());
+        ReflectionTestUtils.setField(user, "active", false);
 
         assertThat(user.canAct()).isFalse();
-        assertThatThrownBy(() -> user.deactivate(Instant.now())).isInstanceOf(BusinessRuleException.class);
     }
 
     @Test

@@ -45,25 +45,9 @@ public interface IncidentService {
     List<IncidentSummary> listByTeam(UUID teamId);
 
     /**
-     * Active ({@code OPEN}, {@code IN_PROGRESS}, {@code IN_REVIEW}) incidents of the team, most severe first,
-     * then oldest first.
-     */
-    List<IncidentSummary> listTeamQueue(UUID teamId);
-
-    /**
      * By a member of the owning team or the reporter.
      */
     CommentView addComment(Actor actor, UUID incidentId, String text);
-
-    /**
-     * {@code OPEN -> IN_PROGRESS}, by a member of the owning team.
-     */
-    IncidentChange acknowledge(Actor actor, UUID incidentId);
-
-    /**
-     * {@code IN_REVIEW -> RESOLVED} with a note, by a member of the owning team.
-     */
-    IncidentChange resolve(Actor actor, UUID incidentId, String note);
 
     /**
      * Any step of the lifecycle ({@link org.example.incidents.model.IncidentStatus}), by a member of the owning
@@ -77,25 +61,13 @@ public interface IncidentService {
     IncidentChange updateDetails(Actor actor, UUID incidentId, String title, String description);
 
     /**
-     * Raise or lower severity, by a member of the owning team.
-     */
-    IncidentChange changeSeverity(Actor actor, UUID incidentId, Severity severity);
-
-    /**
      * Escalation by a member of the owning team: severity must go up; {@code targetTeamId} (optional) hands the
      * incident over to another team. The caller checks that the target team is active.
      */
     IncidentChange escalate(Actor actor, UUID incidentId, Severity newSeverity, UUID targetTeamId);
 
     /**
-     * De-escalation by a member of the owning team: severity must go down; {@code targetTeamId} (optional) hands
-     * the incident over to another team. The caller checks that the target team is active.
+     * De-escalation by a member of the owning team: severity must go down; the team keeps the incident.
      */
-    IncidentChange deEscalate(Actor actor, UUID incidentId, Severity newSeverity, UUID targetTeamId);
-
-    /**
-     * Hand over to another team without changing severity, by a member of the owning team or an admin.
-     * The caller checks that the target team is active.
-     */
-    IncidentChange reassign(Actor actor, UUID incidentId, UUID targetTeamId);
+    IncidentChange deEscalate(Actor actor, UUID incidentId, Severity newSeverity);
 }

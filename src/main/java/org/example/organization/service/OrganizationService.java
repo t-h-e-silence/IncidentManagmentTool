@@ -7,7 +7,6 @@ import java.util.UUID;
 import org.example.common.model.Actor;
 import org.example.common.model.Recipient;
 import org.example.organization.model.CategoryRouting;
-import org.example.organization.model.CategoryView;
 import org.example.organization.model.TeamView;
 
 /**
@@ -27,11 +26,6 @@ public interface OrganizationService {
      * Says nothing about whether the user may act: that is {@link #getActiveActor}.
      */
     Optional<UUID> findUserId(String userIdOrUsername);
-
-    /**
-     * Active categories a reporter can choose, by name.
-     */
-    List<CategoryView> listActiveCategories();
 
     /**
      * @throws org.example.common.exception.NotFoundException if the category is unknown or inactive

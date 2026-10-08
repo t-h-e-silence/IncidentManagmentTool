@@ -12,7 +12,6 @@ import org.example.escalations.model.Escalation;
 import org.example.escalations.model.EscalationDirection;
 import org.example.escalations.model.EscalationRecipients;
 import org.example.escalations.model.EscalationRecord;
-import org.example.escalations.model.EscalationView;
 import org.example.escalations.repository.EscalationRepository;
 import org.example.notifications.model.EmailMessage;
 import org.example.notifications.model.NotificationReason;
@@ -35,17 +34,9 @@ public class EscalationServiceImpl implements EscalationService {
     }
 
     @Override
-    public EscalationView recordAndNotify(EscalationRecord record, EscalationRecipients recipients) {
-        Escalation escalation = escalations.save(new Escalation(record, clock.instant()));
+    public void recordAndNotify(EscalationRecord record, EscalationRecipients recipients) {
+        escalations.save(new Escalation(record, clock.instant()));
         notifications.send(emails(record, recipients));
-        return escalation.toView();
-    }
-
-    @Override
-    @Transactional(readOnly = true)
-    public List<EscalationView> getEscalations(UUID incidentId) {
-        return escalations.findByIncidentIdOrderByEscalatedAtAsc(incidentId).stream()
-                .map(Escalation::toView).toList();
     }
 
     /**

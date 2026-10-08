@@ -8,8 +8,8 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.scheduling.annotation.EnableScheduling;
 
 /**
- * Incident management monolith. Users act through {@link org.example.controller.IncidentManagementController},
- * exposed over HTTP by {@link org.example.controller.IncidentManagementHttpController}.
+ * Incident management monolith. Users act over HTTP through its single controller,
+ * {@link org.example.controller.IncidentManagementController}.
  */
 @SpringBootApplication
 @EnableScheduling

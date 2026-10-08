@@ -11,7 +11,7 @@ The diagrams show the **implemented** system. Elements marked **(later)** are no
 
 | Element | Now | Later |
 |---|---|---|
-| User access | Java methods on `IncidentManagementController`, also as HTTP endpoints (`IncidentManagementHttpController`); caller passes the acting user id (`X-User-Id` header) | UI, login (OIDC) |
+| User access | HTTP endpoints of the single `IncidentManagementController`; caller passes a username or user id (`X-User-Id` header) | UI, login (OIDC) |
 | Notification channel | email over SMTP (Mailpit locally) | Slack, SMS |
 | Escalation | manual, by a team member | automatic by team policy |
 | AI investigation assistant | — | separate service with read-only access |
@@ -27,17 +27,17 @@ C4Context
     title System Context — Incident Management System
 
     Person(reporter, "Reporter", "Any user. Reports an incident by choosing a category (severity up to SEV2).")
-    Person(responder, "Responder / Team lead", "Member of a team. Acknowledges, comments on, escalates, reassigns and resolves the team's incidents.")
-    Person(admin, "Admin", "Reassigns any incident, replays failed emails, reviews user activity.")
+    Person(responder, "Responder / Team lead", "Member of a team. Acknowledges, comments on, escalates (and hands over), de-escalates and resolves the team's incidents.")
+    Person(admin, "Admin", "Receives the emails of teams without active members.")
 
     System(ims, "Incident Management System", "Routes incidents to teams, escalates by raising severity and handing over, emails the right people and keeps an append-only audit trail.")
 
     System_Ext(smtp, "Email server", "SMTP relay (corporate relay or a provider; Mailpit locally).")
     System_Ext(ai, "AI investigation assistant (later)", "Reads incidents and timelines through read-only functions.")
 
-    Rel(reporter, ims, "Reports incidents, follows them", "Controller methods")
-    Rel(responder, ims, "Works on, escalates and resolves incidents", "Controller methods")
-    Rel(admin, ims, "Reassigns; replays failed emails", "Controller methods")
+    Rel(reporter, ims, "Reports incidents, follows them", "HTTP")
+    Rel(responder, ims, "Works on, escalates and resolves incidents", "HTTP")
+    Rel(ims, admin, "Emails when a team has no active members", "SMTP")
     Rel(ims, smtp, "Sends notification emails", "SMTP")
     Rel(ai, ims, "Reads incidents and timelines")
     Rel(smtp, responder, "Delivers emails to")
@@ -70,7 +70,7 @@ C4Container
 
     System_Ext(smtp, "Email server", "SMTP relay")
 
-    Rel(user, app, "Calls user functions", "Java")
+    Rel(user, app, "Calls the REST endpoints", "HTTP")
     Rel(app, db, "One transaction per action: incident + audit + notification rows (+ escalation)", "JDBC")
     Rel(app, smtp, "Sends pending emails after commit", "SMTP")
 
@@ -97,21 +97,21 @@ C4Component
         Component(controller, "IncidentManagementController", "Spring component", "The only entry point. Checks the actor, calls the services in order, one transaction per action.")
         Component(org, "organization", "OrganizationService", "Users, teams with per-team roles, category → team routing, recipients.")
         Component(inc, "incidents", "IncidentService", "Lifecycle, severity, owning team, comments, permission checks.")
-        Component(audit, "audit", "AuditService", "Append-only audit entries; incident timeline; user activity.")
+        Component(audit, "audit", "AuditService", "Append-only audit entries; incident history.")
         Component(esc, "escalations", "EscalationService", "Escalation history; one email per receiver (owning team, previous team, reporter).")
-        Component(notif, "notifications", "NotificationService", "Email templates, one row per recipient, retries, dead letters, replay.")
+        Component(notif, "notifications", "NotificationService", "Email templates, one row per recipient, retries, dead letters.")
         Component(job, "EmailDeliveryJob", "Scheduled, every 10 s", "Sends due notifications (FOR UPDATE SKIP LOCKED); retries after 1/5/15 min.")
     }
 
     ContainerDb(db, "Database", "PostgreSQL", "Schemas: organization, incidents, audit, notifications, escalations")
     System_Ext(smtp, "Email server", "SMTP")
 
-    Rel(user, controller, "Report, acknowledge, comment, escalate, reassign, resolve, timeline", "Java")
+    Rel(user, controller, "List teams/incidents, create, PATCH (name, description, severity, status), comment, history", "HTTP")
     Rel(controller, org, "getActiveActor, getRouting, members, admins, recipients")
-    Rel(controller, inc, "create, acknowledge, resolve, changeSeverity, escalate, reassign, addComment")
+    Rel(controller, inc, "create, list, get, updateDetails, escalate, deEscalate, changeStatus, addComment")
     Rel(controller, audit, "record, getIncidentTimeline")
-    Rel(controller, notif, "notifyIncident, getForIncident, replay")
-    Rel(controller, esc, "recordAndNotify, getEscalations")
+    Rel(controller, notif, "notifyIncident")
+    Rel(controller, esc, "recordAndNotify")
     Rel(esc, notif, "send(escalation emails)")
     Rel(job, notif, "deliverDue")
     Rel(job, smtp, "Send email", "SMTP")
@@ -145,7 +145,7 @@ C4Dynamic
     title Dynamic — incident escalated from Database to Platform
 
     Person(dan, "Dan", "Responder in Database")
-    Component(controller, "IncidentManagementController", "Spring component")
+    Component(controller, "IncidentManagementController", "REST controller")
     Component(org, "organization", "OrganizationService")
     Component(inc, "incidents", "IncidentService")
     Component(audit, "audit", "AuditService")
@@ -153,7 +153,7 @@ C4Dynamic
     Component(notif, "notifications", "NotificationService")
     Component(job, "EmailDeliveryJob", "Scheduled")
 
-    Rel(dan, controller, "escalateIncident(SEV1, Platform, reason)", "Java")
+    Rel(dan, controller, "PATCH /incidents/{id} (SEV1, Platform, reason)", "HTTP")
     Rel(controller, org, "getActiveActor; requireActiveTeam(Platform)")
     Rel(controller, inc, "escalate: SEV3 → SEV1, team → Platform, status → OPEN")
     Rel(controller, audit, "record(ESCALATED, from/to, reason)")

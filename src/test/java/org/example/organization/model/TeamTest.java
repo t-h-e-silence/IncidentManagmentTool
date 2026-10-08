@@ -9,6 +9,7 @@ import java.util.UUID;
 import org.example.common.exception.BusinessRuleException;
 import org.example.common.model.TeamRole;
 import org.junit.jupiter.api.Test;
+import org.springframework.test.util.ReflectionTestUtils;
 
 class TeamTest {
 
@@ -17,28 +18,22 @@ class TeamTest {
     private final Team team = new Team(UUID.randomUUID(), "Database", alice, TeamRole.TEAM_LEAD);
 
     @Test
-    void startsWithItsFirstMember() {
-        assertThat(team.roleOf(alice)).contains(TeamRole.TEAM_LEAD);
-        assertThat(team.roleOf(bob)).isEmpty();
-    }
-
-    @Test
-    void addsAndRemovesMembers() {
+    void startsWithItsFirstMemberAndAddsOthers() {
         team.addMember(bob, TeamRole.RESPONDER);
-        team.removeMember(alice);
 
-        assertThat(team.getMembers()).containsOnlyKeys(bob);
+        assertThat(team.getMembers())
+                .containsEntry(alice, TeamRole.TEAM_LEAD)
+                .containsEntry(bob, TeamRole.RESPONDER);
     }
 
     @Test
-    void rejectsDuplicateMemberAndKeepsAtLeastOne() {
+    void rejectsDuplicateMember() {
         assertThatThrownBy(() -> team.addMember(alice, TeamRole.RESPONDER)).isInstanceOf(BusinessRuleException.class);
-        assertThatThrownBy(() -> team.removeMember(alice)).isInstanceOf(BusinessRuleException.class);
     }
 
     @Test
     void archivedTeamCannotChange() {
-        team.archive(Instant.now());
+        ReflectionTestUtils.setField(team, "archivedAt", Instant.now());
 
         assertThat(team.isArchived()).isTrue();
         assertThatThrownBy(() -> team.addMember(bob, TeamRole.RESPONDER)).isInstanceOf(BusinessRuleException.class);

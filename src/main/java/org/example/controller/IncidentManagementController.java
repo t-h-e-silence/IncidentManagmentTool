@@ -4,8 +4,6 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Objects;
-import java.util.Optional;
 import java.util.UUID;
 
 import org.example.audit.model.AuditAction;
@@ -13,14 +11,15 @@ import org.example.audit.model.AuditEntityType;
 import org.example.audit.model.AuditEntryView;
 import org.example.audit.model.AuditRecord;
 import org.example.audit.service.AuditService;
-import org.example.common.exception.ForbiddenException;
+import org.example.common.exception.BusinessRuleException;
+import org.example.common.exception.NotFoundException;
 import org.example.common.model.Actor;
 import org.example.common.model.Recipient;
 import org.example.common.model.Severity;
-import org.example.controller.model.EscalateCommand;
+import org.example.controller.model.AddCommentCommand;
+import org.example.controller.model.UpdateIncidentCommand;
 import org.example.escalations.model.EscalationRecipients;
 import org.example.escalations.model.EscalationRecord;
-import org.example.escalations.model.EscalationView;
 import org.example.escalations.service.EscalationService;
 import org.example.incidents.model.CommentView;
 import org.example.incidents.model.IncidentChange;
@@ -31,29 +30,45 @@ import org.example.incidents.model.ReportIncidentCommand;
 import org.example.incidents.service.IncidentService;
 import org.example.notifications.model.IncidentNotice;
 import org.example.notifications.model.NotificationReason;
-import org.example.notifications.model.NotificationView;
 import org.example.notifications.service.NotificationService;
 import org.example.organization.model.CategoryRouting;
-import org.example.organization.model.CategoryView;
 import org.example.organization.model.TeamView;
 import org.example.organization.service.OrganizationService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.stereotype.Component;
+import org.springframework.http.HttpStatus;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PatchMapping;
+import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.ResponseStatus;
+import org.springframework.web.bind.annotation.RestController;
 
 /**
- * The single entry point for users: every user action is one method here. There is no HTTP API.
+ * The single entry point of the application, over HTTP: every endpoint is one user action.
  *
- * <p>Each method checks the actor ({@code actorId} must be an active user), then calls the module services in
- * order. Each method is one transaction: the incident change, its audit entry and its notifications are saved
- * together or not at all. Emails are sent after commit by the notifications delivery job.
+ * <ul>
+ *   <li>{@code GET /teams} — list teams</li>
+ *   <li>{@code GET /incidents}, {@code GET /teams/{teamId}/incidents}, {@code GET /users/{user}/incidents} — list
+ *       incidents: all, by owning team, by reporter</li>
+ *   <li>{@code POST /incidents} — create an incident</li>
+ *   <li>{@code PATCH /incidents/{id}} — update name, description, severity (escalation / de-escalation) and status</li>
+ *   <li>{@code GET /incidents/{id}}, {@code POST /incidents/{id}/comments}, {@code GET /incidents/{id}/history} —
+ *       view, comment, audit history</li>
+ * </ul>
  *
- * <p>Errors are exceptions from {@code org.example.common.exception}: unknown/inactive actor →
- * {@code UnauthenticatedException}, not allowed → {@code ForbiddenException}, missing → {@code NotFoundException},
- * rule violated → {@code BusinessRuleException}.
+ * <p>The caller is the {@value ActingUser#HEADER} header (user id or username). Each method checks that the caller
+ * is an active user, then calls the module services in order, in one transaction: the incident change, its audit
+ * entries (sharing one correlation id) and its notifications are saved together or not at all. Emails are sent after commit by the
+ * notifications delivery job.
+ *
+ * <p>Errors are exceptions from {@code org.example.common.exception}, mapped to status codes by
+ * {@link HttpErrorHandler}: unknown/inactive caller 401, not allowed 403, missing 404, rule violated 409,
+ * invalid input 400.
  */
-@Component
+@RestController
 @Transactional
 public class IncidentManagementController {
 
@@ -75,50 +90,63 @@ public class IncidentManagementController {
         this.escalations = escalations;
     }
 
-    // ---------------------------------------------------------------- organization
-
-    /**
-     * The id of a user given by id or username (e.g. {@code bob}), so callers can name users briefly; empty if
-     * unknown. Does not check that the user may act.
-     */
-    @Transactional(readOnly = true)
-    public Optional<UUID> findUserId(String userIdOrUsername) {
-        return organization.findUserId(userIdOrUsername);
-    }
-
-    /**
-     * Categories the actor can report an incident in.
-     */
-    @Transactional(readOnly = true)
-    public List<CategoryView> listCategories(UUID actorId) {
-        organization.getActiveActor(actorId);
-        return organization.listActiveCategories();
-    }
+    // ---------------------------------------------------------------- 1. teams
 
     /**
      * All teams, archived ones included, by name, each with its active members.
      */
+    @GetMapping("/teams")
     @Transactional(readOnly = true)
-    public List<TeamView> listTeams(UUID actorId) {
+    public List<TeamView> listTeams(@ActingUser UUID actorId) {
         organization.getActiveActor(actorId);
         return organization.listTeams();
     }
 
+    // ---------------------------------------------------------------- 2. list incidents
+
     /**
-     * A team and its active members.
+     * Every incident, in any status, newest first.
      */
+    @GetMapping("/incidents")
     @Transactional(readOnly = true)
-    public TeamView getTeam(UUID actorId, UUID teamId) {
+    public List<IncidentSummary> listAllIncidents(@ActingUser UUID actorId) {
         organization.getActiveActor(actorId);
-        return organization.getTeam(teamId);
+        return incidents.listAll();
     }
 
-    // ---------------------------------------------------------------- reporting
+    /**
+     * Incidents a team owns, in any status, newest first.
+     */
+    @GetMapping("/teams/{teamId}/incidents")
+    @Transactional(readOnly = true)
+    public List<IncidentSummary> listTeamIncidents(@ActingUser UUID actorId, @PathVariable UUID teamId) {
+        organization.getActiveActor(actorId);
+        organization.getTeam(teamId);
+        return incidents.listByTeam(teamId);
+    }
+
+    /**
+     * Incidents a user reported, newest first.
+     *
+     * @param user user id or username
+     */
+    @GetMapping("/users/{user}/incidents")
+    @Transactional(readOnly = true)
+    public List<IncidentSummary> listUserIncidents(@ActingUser UUID actorId, @PathVariable String user) {
+        organization.getActiveActor(actorId);
+        UUID userId = organization.findUserId(user)
+                .orElseThrow(() -> new NotFoundException("User " + user + " not found"));
+        return incidents.listReportedBy(userId);
+    }
+
+    // ---------------------------------------------------------------- 3. create
 
     /**
      * Reports an incident; the category decides the owning team, which is emailed.
      */
-    public IncidentView reportIncident(UUID actorId, ReportIncidentCommand command) {
+    @PostMapping("/incidents")
+    @ResponseStatus(HttpStatus.CREATED)
+    public IncidentView createIncident(@ActingUser UUID actorId, @RequestBody ReportIncidentCommand command) {
         Actor actor = organization.getActiveActor(actorId);
         String correlationId = newCorrelationId();
         CategoryRouting routing = organization.getRouting(command.categoryId());
@@ -133,49 +161,84 @@ public class IncidentManagementController {
         return incident;
     }
 
+    // ---------------------------------------------------------------- 4. update
+
+    /**
+     * Updates an incident; all given changes succeed together or none does. In order:
+     * <ol>
+     *   <li><b>title / description</b> — by the owning team or the reporter; no emails.</li>
+     *   <li><b>severity</b> — by the owning team, with a reason. Higher = <b>escalation</b>, optionally handing the
+     *       incident over to {@code targetTeamId}; lower = <b>de-escalation</b>, same team. Both are recorded by the
+     *       escalations module, which emails the owning team, the previous team (if handed over) and the
+     *       reporter.</li>
+     *   <li><b>status</b> — by the owning team:
+     *       {@code OPEN -> IN_PROGRESS -> IN_REVIEW -> RESOLVED -> CLOSED}, {@code IN_REVIEW -> IN_PROGRESS},
+     *       {@code RESOLVED -> IN_PROGRESS} (reopen), {@code OPEN | IN_PROGRESS | IN_REVIEW -> CANCELLED}.
+     *       A reason is needed to resolve, cancel or reopen. Emails: acknowledged (to {@code IN_PROGRESS} from
+     *       {@code OPEN}) → reporter; resolved, reopened, cancelled → team and reporter.</li>
+     * </ol>
+     */
+    @PatchMapping("/incidents/{incidentId}")
+    public IncidentView updateIncident(@ActingUser UUID actorId, @PathVariable UUID incidentId,
+                                       @RequestBody UpdateIncidentCommand command) {
+        Actor actor = organization.getActiveActor(actorId);
+        String correlationId = newCorrelationId();
+        IncidentView incident = incidents.get(incidentId);
+        if (command.changesDetails()) {
+            incident = updateDetails(actor, incidentId, command, correlationId);
+        }
+        if (command.severity() != null) {
+            incident = changeSeverity(actor, incident, command, correlationId);
+        }
+        if (command.status() != null) {
+            incident = changeStatus(actor, incidentId, command.status(), command.reason(), correlationId);
+        }
+        return incident;
+    }
+
+    // ---------------------------------------------------------------- view, comment, history
+
+    @GetMapping("/incidents/{incidentId}")
     @Transactional(readOnly = true)
-    public IncidentView getIncident(UUID actorId, UUID incidentId) {
+    public IncidentView getIncident(@ActingUser UUID actorId, @PathVariable UUID incidentId) {
         organization.getActiveActor(actorId);
         return incidents.get(incidentId);
     }
 
     /**
-     * Incidents the actor reported, newest first.
-     */
-    @Transactional(readOnly = true)
-    public List<IncidentSummary> listMyReportedIncidents(UUID actorId) {
-        organization.getActiveActor(actorId);
-        return incidents.listReportedBy(actorId);
-    }
-
-    /**
-     * Every incident, in any status, newest first.
-     */
-    @Transactional(readOnly = true)
-    public List<IncidentSummary> listAllIncidents(UUID actorId) {
-        organization.getActiveActor(actorId);
-        return incidents.listAll();
-    }
-
-    /**
-     * Incidents a user reported, newest first.
-     */
-    @Transactional(readOnly = true)
-    public List<IncidentSummary> listIncidentsReportedBy(UUID actorId, UUID userId) {
-        organization.getActiveActor(actorId);
-        return incidents.listReportedBy(userId);
-    }
-
-    /**
-     * New title and/or description; null keeps the current value. No emails.
      * By a member of the owning team or the reporter, while the incident is active.
      */
-    public IncidentView updateIncidentDetails(UUID actorId, UUID incidentId, String title, String description) {
+    @PostMapping("/incidents/{incidentId}/comments")
+    @ResponseStatus(HttpStatus.CREATED)
+    public CommentView addComment(@ActingUser UUID actorId, @PathVariable UUID incidentId,
+                                  @RequestBody AddCommentCommand command) {
         Actor actor = organization.getActiveActor(actorId);
-        IncidentChange change = incidents.updateDetails(actor, incidentId, title, description);
+        CommentView comment = incidents.addComment(actor, incidentId, command.text());
+        audit.record(new AuditRecord(actor.id(), AuditAction.COMMENT_ADDED, AuditEntityType.COMMENT, comment.id(),
+                incidentId, Map.of(), newCorrelationId()));
+        log.info("{} commented on incident {}", actor.name(), incidentId);
+        return comment;
+    }
+
+    /**
+     * The audit history of an incident, oldest first: who did what, with details (from/to, reasons).
+     */
+    @GetMapping("/incidents/{incidentId}/history")
+    @Transactional(readOnly = true)
+    public List<AuditEntryView> getIncidentHistory(@ActingUser UUID actorId, @PathVariable UUID incidentId) {
+        organization.getActiveActor(actorId);
+        incidents.get(incidentId);
+        return audit.getIncidentTimeline(incidentId);
+    }
+
+    // ---------------------------------------------------------------- update steps
+
+    private IncidentView updateDetails(Actor actor, UUID incidentId, UpdateIncidentCommand command,
+                                       String correlationId) {
+        IncidentChange change = incidents.updateDetails(actor, incidentId, command.title(), command.description());
         IncidentView before = change.before();
         IncidentView after = change.after();
-        audit(actor, AuditAction.DETAILS_UPDATED, incidentId, newCorrelationId(),
+        audit(actor, AuditAction.DETAILS_UPDATED, incidentId, correlationId,
                 "fromTitle", before.title(), "toTitle", after.title(),
                 "descriptionChanged", String.valueOf(!before.description().equals(after.description())));
         log.info("{} updated title/description of incident {}", actor.name(), incidentId);
@@ -183,228 +246,55 @@ public class IncidentManagementController {
     }
 
     /**
-     * By a member of the owning team or the reporter.
+     * Escalation (severity up, optional hand-over) or de-escalation (severity down, same team).
      */
-    public CommentView addComment(UUID actorId, UUID incidentId, String text) {
-        Actor actor = organization.getActiveActor(actorId);
-        CommentView comment = incidents.addComment(actor, incidentId, text);
-        audit.record(new AuditRecord(actor.id(), AuditAction.COMMENT_ADDED, AuditEntityType.COMMENT, comment.id(),
-                incidentId, Map.of(), newCorrelationId()));
-        log.info("{} commented on incident {}", actor.name(), incidentId);
-        return comment;
-    }
-
-    // ---------------------------------------------------------------- working an incident
-
-    /**
-     * All incidents a team owns, in any status, newest first.
-     */
-    @Transactional(readOnly = true)
-    public List<IncidentSummary> listTeamIncidents(UUID actorId, UUID teamId) {
-        organization.getActiveActor(actorId);
-        organization.getTeam(teamId);
-        return incidents.listByTeam(teamId);
-    }
-
-    /**
-     * Active ({@code OPEN}, {@code IN_PROGRESS}, {@code IN_REVIEW}) incidents of a team, most severe first, then
-     * oldest first.
-     */
-    @Transactional(readOnly = true)
-    public List<IncidentSummary> getTeamQueue(UUID actorId, UUID teamId) {
-        organization.getActiveActor(actorId);
-        organization.getTeam(teamId);
-        return incidents.listTeamQueue(teamId);
-    }
-
-    /**
-     * {@code OPEN -> IN_PROGRESS}; the reporter is emailed.
-     */
-    public IncidentView acknowledgeIncident(UUID actorId, UUID incidentId) {
-        Actor actor = organization.getActiveActor(actorId);
-        return afterStatusChange(actor, incidents.acknowledge(actor, incidentId), null);
-    }
-
-    /**
-     * {@code IN_REVIEW -> RESOLVED} with a note; the team and the reporter are emailed.
-     */
-    public IncidentView resolveIncident(UUID actorId, UUID incidentId, String note) {
-        Actor actor = organization.getActiveActor(actorId);
-        return afterStatusChange(actor, incidents.resolve(actor, incidentId, note), note);
-    }
-
-    /**
-     * Any step of the lifecycle, by a member of the owning team:
-     * <pre>
-     * OPEN -> IN_PROGRESS -> IN_REVIEW -> RESOLVED -> CLOSED
-     * IN_REVIEW -> IN_PROGRESS (back to work), RESOLVED -> IN_PROGRESS (reopen)
-     * OPEN | IN_PROGRESS | IN_REVIEW -> CANCELLED
-     * </pre>
-     * {@code note} is required to resolve, cancel or reopen. Emails: acknowledged → reporter; resolved, reopened,
-     * cancelled → team and reporter; the other steps send none.
-     */
-    public IncidentView changeIncidentStatus(UUID actorId, UUID incidentId, IncidentStatus status, String note) {
-        Actor actor = organization.getActiveActor(actorId);
-        return afterStatusChange(actor, incidents.changeStatus(actor, incidentId, status, note), note);
-    }
-
-    /**
-     * Raise or lower severity, e.g. to correct the reporter's estimate. No emails; an escalation or de-escalation
-     * (with a reason, optionally to another team, and emails) is {@link #escalateIncident} / {@link #deEscalateIncident}.
-     */
-    public IncidentView changeSeverity(UUID actorId, UUID incidentId, Severity severity) {
-        Actor actor = organization.getActiveActor(actorId);
-        IncidentChange change = incidents.changeSeverity(actor, incidentId, severity);
-        audit(actor, AuditAction.SEVERITY_CHANGED, incidentId, newCorrelationId(),
-                "from", change.before().severity().name(), "to", change.after().severity().name());
-        log.info("{} changed severity of incident {} from {} to {}", actor.name(), incidentId,
-                change.before().severity(), change.after().severity());
-        return change.after();
-    }
-
-    /**
-     * Escalates: severity goes up, and the incident may be handed over to another active team. The owning team,
-     * the previous team (if handed over) and the reporter each get their own email, built by the escalations module.
-     * By a member of the owning team.
-     */
-    public IncidentView escalateIncident(UUID actorId, UUID incidentId, EscalateCommand command) {
-        Actor actor = organization.getActiveActor(actorId);
-        if (command.targetTeamId() != null) {
-            organization.requireActiveTeam(command.targetTeamId());
+    private IncidentView changeSeverity(Actor actor, IncidentView current, UpdateIncidentCommand command,
+                                        String correlationId) {
+        Severity severity = command.severity();
+        UUID targetTeamId = command.targetTeamId();
+        if (severity == current.severity()) {
+            throw new BusinessRuleException("Severity is already " + severity);
         }
-        IncidentChange change = incidents.escalate(actor, incidentId, command.severity(), command.targetTeamId());
-        return recordEscalation(actor, AuditAction.ESCALATED, change, command);
-    }
-
-    /**
-     * De-escalates: severity goes down, and the incident may be handed over to another active team. Recorded and
-     * emailed like an escalation. By a member of the owning team.
-     */
-    public IncidentView deEscalateIncident(UUID actorId, UUID incidentId, EscalateCommand command) {
-        Actor actor = organization.getActiveActor(actorId);
-        if (command.targetTeamId() != null) {
-            organization.requireActiveTeam(command.targetTeamId());
+        boolean raise = severity.isHigherThan(current.severity());
+        IncidentChange change;
+        if (raise) {
+            if (targetTeamId != null) {
+                organization.requireActiveTeam(targetTeamId);
+            }
+            change = incidents.escalate(actor, current.id(), severity, targetTeamId);
+        } else {
+            if (targetTeamId != null) {
+                throw new BusinessRuleException("Only an escalation (severity raise) can hand the incident over to "
+                        + "another team");
+            }
+            change = incidents.deEscalate(actor, current.id(), severity);
         }
-        IncidentChange change = incidents.deEscalate(actor, incidentId, command.severity(), command.targetTeamId());
-        return recordEscalation(actor, AuditAction.DE_ESCALATED, change, command);
-    }
-
-    /**
-     * Hands the incident over to another active team without changing severity; the new team and the
-     * reporter are emailed. By a member of the owning team or an admin.
-     */
-    public IncidentView reassignIncident(UUID actorId, UUID incidentId, UUID targetTeamId, String reason) {
-        Actor actor = organization.getActiveActor(actorId);
-        organization.requireActiveTeam(targetTeamId);
-        IncidentChange change = incidents.reassign(actor, incidentId, targetTeamId);
-        audit(actor, AuditAction.REASSIGNED, incidentId, newCorrelationId(),
-                "fromTeam", change.before().teamId().toString(), "toTeam", targetTeamId.toString(),
-                "reason", Objects.requireNonNullElse(reason, ""));
-        IncidentView incident = change.after();
-        notifications.notifyIncident(notice(incident, NotificationReason.INCIDENT_REASSIGNED, reason),
-                union(teamRecipients(targetTeamId), reporterRecipient(incident, actor)));
-        log.info("{} reassigned incident {} from team {} to {}", actor.name(), incidentId,
-                change.before().teamId(), targetTeamId);
-        return incident;
-    }
-
-    // ---------------------------------------------------------------- history
-
-    /**
-     * Everything that happened to an incident, oldest first.
-     */
-    @Transactional(readOnly = true)
-    public List<AuditEntryView> getIncidentTimeline(UUID actorId, UUID incidentId) {
-        organization.getActiveActor(actorId);
-        incidents.get(incidentId);
-        return audit.getIncidentTimeline(incidentId);
-    }
-
-    /**
-     * Emails sent (or pending) about an incident.
-     */
-    @Transactional(readOnly = true)
-    public List<NotificationView> getIncidentNotifications(UUID actorId, UUID incidentId) {
-        organization.getActiveActor(actorId);
-        incidents.get(incidentId);
-        return notifications.getForIncident(incidentId);
-    }
-
-    /**
-     * Escalations of an incident, oldest first.
-     */
-    @Transactional(readOnly = true)
-    public List<EscalationView> getIncidentEscalations(UUID actorId, UUID incidentId) {
-        organization.getActiveActor(actorId);
-        incidents.get(incidentId);
-        return escalations.getEscalations(incidentId);
-    }
-
-    // ---------------------------------------------------------------- admin
-
-    /**
-     * Emails that failed every attempt. Admins only.
-     */
-    @Transactional(readOnly = true)
-    public List<NotificationView> listDeadLetteredNotifications(UUID adminId) {
-        requireAdmin(adminId);
-        return notifications.getDeadLettered();
-    }
-
-    /**
-     * Sends a dead-lettered email again. Admins only.
-     */
-    public NotificationView replayNotification(UUID adminId, UUID notificationId) {
-        Actor admin = requireAdmin(adminId);
-        NotificationView notification = notifications.replay(notificationId);
-        audit.record(new AuditRecord(admin.id(), AuditAction.NOTIFICATION_REPLAYED, AuditEntityType.NOTIFICATION,
-                notification.id(), notification.incidentId(), Map.of("recipient", notification.recipientId().toString()),
-                newCorrelationId()));
-        log.info("{} replayed notification {}", admin.name(), notificationId);
-        return notification;
-    }
-
-    /**
-     * Everything a user did, oldest first. Admins only.
-     */
-    @Transactional(readOnly = true)
-    public List<AuditEntryView> getUserActivity(UUID adminId, UUID userId) {
-        requireAdmin(adminId);
-        return audit.getActionsByUser(userId);
-    }
-
-    // ---------------------------------------------------------------- helpers
-
-    private Actor requireAdmin(UUID actorId) {
-        Actor actor = organization.getActiveActor(actorId);
-        if (!actor.isAdmin()) {
-            throw new ForbiddenException("Only admins may do this");
-        }
-        return actor;
+        return recordEscalation(actor, raise ? AuditAction.ESCALATED : AuditAction.DE_ESCALATED, change,
+                command.reason(), correlationId);
     }
 
     /**
      * Audits an escalation or de-escalation; the escalations module records it and emails the owning team, the
      * previous team (if handed over) and the reporter.
      */
-    private IncidentView recordEscalation(Actor actor, AuditAction action, IncidentChange change,
-                                          EscalateCommand command) {
+    private IncidentView recordEscalation(Actor actor, AuditAction action, IncidentChange change, String reason,
+                                          String correlationId) {
         IncidentView before = change.before();
         IncidentView after = change.after();
         UUID incidentId = after.id();
         log.info("{} {} incident {}: {} -> {}, team {} -> {}", actor.name(),
                 action == AuditAction.ESCALATED ? "escalated" : "de-escalated", incidentId, before.severity(),
                 after.severity(), before.teamId(), after.teamId());
-        audit(actor, action, incidentId, newCorrelationId(),
+        audit(actor, action, incidentId, correlationId,
                 "fromSeverity", before.severity().name(), "toSeverity", after.severity().name(),
                 "fromTeam", before.teamId().toString(), "toTeam", after.teamId().toString(),
-                "reason", command.reason());
+                "reason", reason);
 
         boolean handedOver = !before.teamId().equals(after.teamId());
         String fromTeamName = organization.getTeam(before.teamId()).name();
         String toTeamName = handedOver ? organization.getTeam(after.teamId()).name() : fromTeamName;
         escalations.recordAndNotify(
-                new EscalationRecord(incidentId, after.title(), actor.id(), actor.name(), command.reason(),
+                new EscalationRecord(incidentId, after.title(), actor.id(), actor.name(), reason,
                         before.severity(), after.severity(), before.teamId(), fromTeamName, after.teamId(),
                         toTeamName),
                 new EscalationRecipients(
@@ -415,18 +305,20 @@ public class IncidentManagementController {
     }
 
     /**
-     * Audits a status change and emails whoever should know about this step.
+     * Moves the status, audits it and emails whoever should know about this step.
      */
-    private IncidentView afterStatusChange(Actor actor, IncidentChange change, String note) {
+    private IncidentView changeStatus(Actor actor, UUID incidentId, IncidentStatus status, String note,
+                                      String correlationId) {
+        IncidentChange change = incidents.changeStatus(actor, incidentId, status, note);
         IncidentStatus from = change.before().status();
         IncidentView incident = change.after();
         IncidentStatus to = incident.status();
         log.info("{} moved incident {} from {} to {}", actor.name(), incident.id(), from, to);
         if (note == null || note.isBlank()) {
-            audit(actor, AuditAction.STATUS_CHANGED, incident.id(), newCorrelationId(),
+            audit(actor, AuditAction.STATUS_CHANGED, incident.id(), correlationId,
                     "from", from.name(), "to", to.name());
         } else {
-            audit(actor, AuditAction.STATUS_CHANGED, incident.id(), newCorrelationId(),
+            audit(actor, AuditAction.STATUS_CHANGED, incident.id(), correlationId,
                     "from", from.name(), "to", to.name(), "note", note.strip());
         }
 
@@ -442,6 +334,8 @@ public class IncidentManagementController {
         }
         return incident;
     }
+
+    // ---------------------------------------------------------------- helpers
 
     private void notifyTeamAndReporter(Actor actor, IncidentView incident, NotificationReason reason, String note) {
         notifications.notifyIncident(notice(incident, reason, note),
