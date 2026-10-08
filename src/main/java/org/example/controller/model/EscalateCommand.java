@@ -7,9 +7,9 @@ import org.example.common.model.Severity;
 import org.example.common.model.Text;
 
 /**
- * A manual escalation request.
+ * A manual escalation or de-escalation request.
  *
- * @param severity     new severity; must be higher than the current one
+ * @param severity     new severity; higher than the current one to escalate, lower to de-escalate
  * @param targetTeamId team to hand the incident over to, or null to keep the owning team
  * @param reason       why; required, shown in the emails and the audit trail
  */

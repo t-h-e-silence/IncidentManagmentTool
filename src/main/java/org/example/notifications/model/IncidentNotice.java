@@ -9,7 +9,7 @@ import org.example.common.model.Severity;
  * What a regular incident email is about; the notifications module renders subject and body from it.
  *
  * @param teamName the owning team (the new one after a reassignment)
- * @param note     resolution note or reassignment reason; null if none
+ * @param note     resolution note, or reason for a reassignment, reopening or cancellation; null if none
  */
 public record IncidentNotice(UUID incidentId, String title, Severity severity, String teamName,
                              NotificationReason reason, String note) {

@@ -6,7 +6,7 @@
 [development-plan.md](development-plan.md) (build steps and progress).
 
 The product design says *what* and *why*; this document describes *how the code does it*. Decisions taken while
-building (no HTTP, severity only, manual escalation only) are recorded in the development plan.
+building (HTTP only as a thin test API, severity only, manual escalation only) are recorded in the development plan.
 
 ---
 
@@ -14,8 +14,10 @@ building (no HTTP, severity only, manual escalation only) are recorded in the de
 Users **report, acknowledge, comment on, escalate, reassign and resolve** incidents. Each incident is owned by **one
 team** at a time, the right people are **emailed**, and every significant action leaves an **append-only audit entry**.
 
-The system is **one Spring Boot application** (monolith) with **no HTTP API**. Users call Java methods on a single
-entry point, `IncidentManagementController`, which orchestrates five modules. Each module has `model/`, `repository/`
+The system is **one Spring Boot application** (monolith). Users call Java methods on a single
+entry point, `IncidentManagementController`, which orchestrates five modules. `IncidentManagementHttpController` exposes
+each of these methods as an HTTP endpoint for testing (the caller is the `X-User-Id` header, no login); it contains
+no logic. Each module has `model/`, `repository/`
 and `service/` (`XxxService` interface + `XxxServiceImpl`) and its own PostgreSQL schema.
 
 | Module | Responsible for | Schema | Service |
@@ -169,14 +171,24 @@ Recipients never include the person acting, and nobody gets the same email twice
 stateDiagram-v2
     [*] --> OPEN: reported
     OPEN --> IN_PROGRESS: acknowledge
-    IN_PROGRESS --> RESOLVED: resolve(note)
-    OPEN --> RESOLVED: resolve(note), e.g. duplicate
-    IN_PROGRESS --> OPEN: handed over to another team (reassign / escalate)
-    RESOLVED --> [*]
+    IN_PROGRESS --> IN_REVIEW: submit for review
+    IN_REVIEW --> IN_PROGRESS: back to work
+    IN_REVIEW --> RESOLVED: resolve(note)
+    RESOLVED --> IN_PROGRESS: reopen(reason)
+    RESOLVED --> CLOSED: close
+    OPEN --> CANCELLED: cancel(reason)
+    IN_PROGRESS --> CANCELLED: cancel(reason)
+    IN_REVIEW --> CANCELLED: cancel(reason)
+    IN_PROGRESS --> OPEN: handed over to another team (reassign / escalate / de-escalate)
+    CLOSED --> [*]
+    CANCELLED --> [*]
 ```
+Only `OPEN`, `IN_PROGRESS` and `IN_REVIEW` incidents can be commented on, edited (title, description), escalated or
+reassigned; they form the team queue.
 
 **Escalation** — a member of the owning team raises severity, with a reason, and may hand the incident over to
-another active team. It is never time-based. **Reassignment** moves it to another team without raising severity.
+another active team. It is never time-based. **De-escalation** is the same with severity going down; both are
+recorded by the escalations module and emailed. **Reassignment** moves it to another team without changing severity.
 
 **Who may do what:**
 | Function | Who |
@@ -225,4 +237,4 @@ There is **no login** yet: callers pass the acting user id, and unknown, deactiv
 2. Which actions become `TEAM_LEAD`-only: resolving SEV1, lowering severity, reassigning?
 3. Is `RESOLVED` final, or can an incident be reopened?
 4. Confidential incidents with restricted read access (e.g. security incidents)?
-5. HTTP API or UI on top of the Controller, and login (OIDC)?
+5. UI on top of the HTTP API, and login (OIDC) instead of the `X-User-Id` header?

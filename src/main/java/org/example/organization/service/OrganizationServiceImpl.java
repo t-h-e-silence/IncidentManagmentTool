@@ -3,6 +3,7 @@ package org.example.organization.service;
 import java.util.Comparator;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
@@ -52,6 +53,19 @@ public class OrganizationServiceImpl implements OrganizationService {
     }
 
     @Override
+    public Optional<UUID> findUserId(String userIdOrUsername) {
+        if (userIdOrUsername == null || userIdOrUsername.isBlank()) {
+            return Optional.empty();
+        }
+        String value = userIdOrUsername.strip();
+        try {
+            return Optional.of(UUID.fromString(value));
+        } catch (IllegalArgumentException notAnId) {
+            return users.findByUsername(value.toLowerCase(Locale.ROOT)).map(User::getId);
+        }
+    }
+
+    @Override
     public List<CategoryView> listActiveCategories() {
         return categories.findByActiveTrueOrderByName().stream().map(Category::toView).toList();
     }
@@ -65,18 +79,13 @@ public class OrganizationServiceImpl implements OrganizationService {
     }
 
     @Override
+    public List<TeamView> listTeams() {
+        return teams.findAllByOrderByName().stream().map(this::toView).toList();
+    }
+
+    @Override
     public TeamView getTeam(UUID teamId) {
-        Team team = teams.findById(teamId).orElseThrow(() -> new NotFoundException("Team " + teamId + " not found"));
-        Map<UUID, User> activeUsers = activeUsersOf(team);
-        List<TeamMemberView> members = team.getMembers().entrySet().stream()
-                .filter(member -> activeUsers.containsKey(member.getKey()))
-                .map(member -> {
-                    User user = activeUsers.get(member.getKey());
-                    return new TeamMemberView(user.getId(), user.getName(), user.getEmail(), member.getValue());
-                })
-                .sorted(Comparator.comparing(TeamMemberView::name))
-                .toList();
-        return new TeamView(team.getId(), team.getName(), team.isArchived(), members);
+        return toView(teams.findById(teamId).orElseThrow(() -> new NotFoundException("Team " + teamId + " not found")));
     }
 
     @Override
@@ -106,6 +115,19 @@ public class OrganizationServiceImpl implements OrganizationService {
     @Override
     public Optional<Recipient> findRecipient(UUID userId) {
         return users.findById(userId).filter(User::canAct).map(OrganizationServiceImpl::toRecipient);
+    }
+
+    private TeamView toView(Team team) {
+        Map<UUID, User> activeUsers = activeUsersOf(team);
+        List<TeamMemberView> members = team.getMembers().entrySet().stream()
+                .filter(member -> activeUsers.containsKey(member.getKey()))
+                .map(member -> {
+                    User user = activeUsers.get(member.getKey());
+                    return new TeamMemberView(user.getId(), user.getName(), user.getEmail(), member.getValue());
+                })
+                .sorted(Comparator.comparing(TeamMemberView::name))
+                .toList();
+        return new TeamView(team.getId(), team.getName(), team.isArchived(), members);
     }
 
     /**

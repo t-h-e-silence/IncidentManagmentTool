@@ -11,7 +11,7 @@ The diagrams show the **implemented** system. Elements marked **(later)** are no
 
 | Element | Now | Later |
 |---|---|---|
-| User access | Java methods on `IncidentManagementController` (no HTTP); caller passes the acting user id | HTTP API / UI, login (OIDC) |
+| User access | Java methods on `IncidentManagementController`, also as HTTP endpoints (`IncidentManagementHttpController`); caller passes the acting user id (`X-User-Id` header) | UI, login (OIDC) |
 | Notification channel | email over SMTP (Mailpit locally) | Slack, SMS |
 | Escalation | manual, by a team member | automatic by team policy |
 | AI investigation assistant | — | separate service with read-only access |
@@ -54,7 +54,7 @@ C4Context
 ---
 
 ## Level 2 — Containers
-One deployable application (monolith, no web server) and one PostgreSQL database with one schema per module.
+One deployable application (monolith, embedded Tomcat for the test HTTP API) and one PostgreSQL database with one schema per module.
 
 ```mermaid
 %%{init: {"themeVariables": {"textColor": "#8A8F98"}}}%%

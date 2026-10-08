@@ -16,6 +16,7 @@ import java.util.stream.Collectors;
 
 import org.example.common.model.Severity;
 import org.example.escalations.model.Escalation;
+import org.example.escalations.model.EscalationDirection;
 import org.example.escalations.model.EscalationRecipients;
 import org.example.escalations.model.EscalationRecord;
 import org.example.escalations.model.EscalationView;
@@ -105,6 +106,34 @@ class EscalationServiceImplTest {
                 new EscalationRecipients(List.of(recipient(BOB)), List.of(), Optional.of(recipient(BOB))));
 
         assertThat(sentEmails().get(BOB.id()).subject()).startsWith("[SEV1] Escalated to you");
+    }
+
+    @Test
+    void deEscalationIsRecordedAndEmailedAsSuch() {
+        when(repository.save(any(Escalation.class))).thenAnswer(invocation -> invocation.getArgument(0));
+        EscalationRecord deEscalation = new EscalationRecord(incidentId, "DB down", DAN.id(), "Dan Dba",
+                "only one replica affected", Severity.SEV1, Severity.SEV3, DATABASE, "Database", DATABASE, "Database");
+
+        EscalationView view = service.recordAndNotify(deEscalation,
+                new EscalationRecipients(List.of(recipient(ALICE)), List.of(), Optional.of(recipient(BOB))));
+
+        assertThat(view.direction()).isEqualTo(EscalationDirection.DOWN);
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<List<EmailMessage>> sent = ArgumentCaptor.forClass(List.class);
+        verify(notifications).send(sent.capture());
+        Map<UUID, EmailMessage> emails = sent.getValue().stream()
+                .collect(Collectors.toMap(m -> m.recipient().userId(), Function.identity()));
+        assertThat(emails.values()).allMatch(m -> m.reason() == NotificationReason.INCIDENT_DEESCALATED);
+        assertThat(emails.get(ALICE.id()).subject()).isEqualTo("[SEV3] De-escalated: DB down");
+        assertThat(emails.get(ALICE.id()).body()).contains("Severity lowered from SEV1 to SEV3");
+        assertThat(emails.get(BOB.id()).subject()).isEqualTo("[SEV3] Your incident was de-escalated: DB down");
+    }
+
+    @Test
+    void severityMustChange() {
+        assertThatThrownBy(() -> new EscalationRecord(incidentId, "DB down", DAN.id(), "Dan", "why", Severity.SEV2,
+                Severity.SEV2, DATABASE, "Database", DATABASE, "Database"))
+                .isInstanceOf(IllegalArgumentException.class);
     }
 
     @Test

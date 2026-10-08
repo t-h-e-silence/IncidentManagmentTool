@@ -35,6 +35,10 @@ public class User {
     @Column(nullable = false, length = 320, unique = true)
     private String email;
 
+    /** Short login name, lower-case and unique (e.g. {@code bob}); optional. */
+    @Column(length = 50, unique = true)
+    private String username;
+
     @Enumerated(EnumType.STRING)
     @Column(name = "system_role", nullable = false, length = 20)
     private SystemRole systemRole;
@@ -88,6 +92,10 @@ public class User {
 
     public String getName() {
         return name;
+    }
+
+    public String getUsername() {
+        return username;
     }
 
     public String getEmail() {

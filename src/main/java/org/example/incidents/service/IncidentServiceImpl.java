@@ -55,15 +55,27 @@ public class IncidentServiceImpl implements IncidentService {
 
     @Override
     @Transactional(readOnly = true)
+    public List<IncidentSummary> listAll() {
+        return summaries(incidents.findAllByOrderByCreatedAtDesc());
+    }
+
+    @Override
+    @Transactional(readOnly = true)
     public List<IncidentSummary> listReportedBy(UUID userId) {
-        return incidents.findByReporterIdOrderByCreatedAtDesc(userId).stream().map(Incident::toSummary).toList();
+        return summaries(incidents.findByReporterIdOrderByCreatedAtDesc(userId));
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public List<IncidentSummary> listByTeam(UUID teamId) {
+        return summaries(incidents.findByTeamIdOrderByCreatedAtDesc(teamId));
     }
 
     @Override
     @Transactional(readOnly = true)
     public List<IncidentSummary> listTeamQueue(UUID teamId) {
-        return incidents.findByTeamIdAndStatusNotOrderBySeverityAscCreatedAtAsc(teamId, IncidentStatus.RESOLVED)
-                .stream().map(Incident::toSummary).toList();
+        return summaries(incidents.findByTeamIdAndStatusInOrderBySeverityAscCreatedAtAsc(teamId,
+                IncidentStatus.ACTIVE));
     }
 
     @Override
@@ -88,6 +100,21 @@ public class IncidentServiceImpl implements IncidentService {
     }
 
     @Override
+    public IncidentChange changeStatus(Actor actor, UUID incidentId, IncidentStatus status, String note) {
+        return changeByTeamMember(actor, incidentId,
+                incident -> incident.changeStatus(status, actor.id(), note, clock.instant()));
+    }
+
+    @Override
+    public IncidentChange updateDetails(Actor actor, UUID incidentId, String title, String description) {
+        Incident incident = load(incidentId);
+        if (!actor.isMemberOf(incident.getTeamId()) && !actor.id().equals(incident.getReporterId())) {
+            throw new ForbiddenException("Only the owning team or the reporter may edit incident " + incidentId);
+        }
+        return change(incident, i -> i.updateDetails(title, description, clock.instant()));
+    }
+
+    @Override
     public IncidentChange changeSeverity(Actor actor, UUID incidentId, Severity severity) {
         return changeByTeamMember(actor, incidentId, incident -> incident.changeSeverity(severity, clock.instant()));
     }
@@ -96,6 +123,12 @@ public class IncidentServiceImpl implements IncidentService {
     public IncidentChange escalate(Actor actor, UUID incidentId, Severity newSeverity, UUID targetTeamId) {
         return changeByTeamMember(actor, incidentId,
                 incident -> incident.escalate(newSeverity, targetTeamId, clock.instant()));
+    }
+
+    @Override
+    public IncidentChange deEscalate(Actor actor, UUID incidentId, Severity newSeverity, UUID targetTeamId) {
+        return changeByTeamMember(actor, incidentId,
+                incident -> incident.deEscalate(newSeverity, targetTeamId, clock.instant()));
     }
 
     @Override
@@ -130,6 +163,10 @@ public class IncidentServiceImpl implements IncidentService {
         } catch (ObjectOptimisticLockingFailureException e) {
             throw new BusinessRuleException("Incident " + incident.getId() + " was changed concurrently, retry");
         }
+    }
+
+    private static List<IncidentSummary> summaries(List<Incident> list) {
+        return list.stream().map(Incident::toSummary).toList();
     }
 
     private Incident load(UUID incidentId) {

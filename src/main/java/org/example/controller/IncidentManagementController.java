@@ -5,6 +5,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.UUID;
 
 import org.example.audit.model.AuditAction;
@@ -23,6 +24,7 @@ import org.example.escalations.model.EscalationView;
 import org.example.escalations.service.EscalationService;
 import org.example.incidents.model.CommentView;
 import org.example.incidents.model.IncidentChange;
+import org.example.incidents.model.IncidentStatus;
 import org.example.incidents.model.IncidentSummary;
 import org.example.incidents.model.IncidentView;
 import org.example.incidents.model.ReportIncidentCommand;
@@ -76,12 +78,30 @@ public class IncidentManagementController {
     // ---------------------------------------------------------------- organization
 
     /**
+     * The id of a user given by id or username (e.g. {@code bob}), so callers can name users briefly; empty if
+     * unknown. Does not check that the user may act.
+     */
+    @Transactional(readOnly = true)
+    public Optional<UUID> findUserId(String userIdOrUsername) {
+        return organization.findUserId(userIdOrUsername);
+    }
+
+    /**
      * Categories the actor can report an incident in.
      */
     @Transactional(readOnly = true)
     public List<CategoryView> listCategories(UUID actorId) {
         organization.getActiveActor(actorId);
         return organization.listActiveCategories();
+    }
+
+    /**
+     * All teams, archived ones included, by name, each with its active members.
+     */
+    @Transactional(readOnly = true)
+    public List<TeamView> listTeams(UUID actorId) {
+        organization.getActiveActor(actorId);
+        return organization.listTeams();
     }
 
     /**
@@ -127,6 +147,39 @@ public class IncidentManagementController {
     }
 
     /**
+     * Every incident, in any status, newest first.
+     */
+    @Transactional(readOnly = true)
+    public List<IncidentSummary> listAllIncidents(UUID actorId) {
+        organization.getActiveActor(actorId);
+        return incidents.listAll();
+    }
+
+    /**
+     * Incidents a user reported, newest first.
+     */
+    @Transactional(readOnly = true)
+    public List<IncidentSummary> listIncidentsReportedBy(UUID actorId, UUID userId) {
+        organization.getActiveActor(actorId);
+        return incidents.listReportedBy(userId);
+    }
+
+    /**
+     * New title and/or description; null keeps the current value. No emails.
+     * By a member of the owning team or the reporter, while the incident is active.
+     */
+    public IncidentView updateIncidentDetails(UUID actorId, UUID incidentId, String title, String description) {
+        Actor actor = organization.getActiveActor(actorId);
+        IncidentChange change = incidents.updateDetails(actor, incidentId, title, description);
+        IncidentView before = change.before();
+        IncidentView after = change.after();
+        audit(actor, AuditAction.DETAILS_UPDATED, incidentId, newCorrelationId(),
+                "fromTitle", before.title(), "toTitle", after.title(),
+                "descriptionChanged", String.valueOf(!before.description().equals(after.description())));
+        return after;
+    }
+
+    /**
      * By a member of the owning team or the reporter.
      */
     public CommentView addComment(UUID actorId, UUID incidentId, String text) {
@@ -140,7 +193,18 @@ public class IncidentManagementController {
     // ---------------------------------------------------------------- working an incident
 
     /**
-     * Unresolved incidents of a team, most severe first, then oldest first.
+     * All incidents a team owns, in any status, newest first.
+     */
+    @Transactional(readOnly = true)
+    public List<IncidentSummary> listTeamIncidents(UUID actorId, UUID teamId) {
+        organization.getActiveActor(actorId);
+        organization.getTeam(teamId);
+        return incidents.listByTeam(teamId);
+    }
+
+    /**
+     * Active ({@code OPEN}, {@code IN_PROGRESS}, {@code IN_REVIEW}) incidents of a team, most severe first, then
+     * oldest first.
      */
     @Transactional(readOnly = true)
     public List<IncidentSummary> getTeamQueue(UUID actorId, UUID teamId) {
@@ -154,30 +218,35 @@ public class IncidentManagementController {
      */
     public IncidentView acknowledgeIncident(UUID actorId, UUID incidentId) {
         Actor actor = organization.getActiveActor(actorId);
-        IncidentChange change = incidents.acknowledge(actor, incidentId);
-        auditStatusChange(actor, change, newCorrelationId());
-        IncidentView incident = change.after();
-        notifications.notifyIncident(notice(incident, NotificationReason.INCIDENT_ACKNOWLEDGED, null),
-                reporterRecipient(incident, actor));
-        return incident;
+        return afterStatusChange(actor, incidents.acknowledge(actor, incidentId), null);
     }
 
     /**
-     * {@code -> RESOLVED} with a note; the team and the reporter are emailed.
+     * {@code IN_REVIEW -> RESOLVED} with a note; the team and the reporter are emailed.
      */
     public IncidentView resolveIncident(UUID actorId, UUID incidentId, String note) {
         Actor actor = organization.getActiveActor(actorId);
-        IncidentChange change = incidents.resolve(actor, incidentId, note);
-        auditStatusChange(actor, change, newCorrelationId());
-        IncidentView incident = change.after();
-        notifications.notifyIncident(notice(incident, NotificationReason.INCIDENT_RESOLVED, note),
-                union(teamRecipients(incident.teamId()), reporterRecipient(incident, actor)));
-        return incident;
+        return afterStatusChange(actor, incidents.resolve(actor, incidentId, note), note);
     }
 
     /**
-     * Raise or lower severity, e.g. to correct the reporter's estimate. No emails; an escalation (with a reason,
-     * optionally to another team, and emails) is {@link #escalateIncident}.
+     * Any step of the lifecycle, by a member of the owning team:
+     * <pre>
+     * OPEN -> IN_PROGRESS -> IN_REVIEW -> RESOLVED -> CLOSED
+     * IN_REVIEW -> IN_PROGRESS (back to work), RESOLVED -> IN_PROGRESS (reopen)
+     * OPEN | IN_PROGRESS | IN_REVIEW -> CANCELLED
+     * </pre>
+     * {@code note} is required to resolve, cancel or reopen. Emails: acknowledged → reporter; resolved, reopened,
+     * cancelled → team and reporter; the other steps send none.
+     */
+    public IncidentView changeIncidentStatus(UUID actorId, UUID incidentId, IncidentStatus status, String note) {
+        Actor actor = organization.getActiveActor(actorId);
+        return afterStatusChange(actor, incidents.changeStatus(actor, incidentId, status, note), note);
+    }
+
+    /**
+     * Raise or lower severity, e.g. to correct the reporter's estimate. No emails; an escalation or de-escalation
+     * (with a reason, optionally to another team, and emails) is {@link #escalateIncident} / {@link #deEscalateIncident}.
      */
     public IncidentView changeSeverity(UUID actorId, UUID incidentId, Severity severity) {
         Actor actor = organization.getActiveActor(actorId);
@@ -198,25 +267,20 @@ public class IncidentManagementController {
             organization.requireActiveTeam(command.targetTeamId());
         }
         IncidentChange change = incidents.escalate(actor, incidentId, command.severity(), command.targetTeamId());
-        IncidentView before = change.before();
-        IncidentView after = change.after();
-        audit(actor, AuditAction.ESCALATED, incidentId, newCorrelationId(),
-                "fromSeverity", before.severity().name(), "toSeverity", after.severity().name(),
-                "fromTeam", before.teamId().toString(), "toTeam", after.teamId().toString(),
-                "reason", command.reason());
+        return recordEscalation(actor, AuditAction.ESCALATED, change, command);
+    }
 
-        boolean handedOver = !before.teamId().equals(after.teamId());
-        String fromTeamName = organization.getTeam(before.teamId()).name();
-        String toTeamName = handedOver ? organization.getTeam(after.teamId()).name() : fromTeamName;
-        escalations.recordAndNotify(
-                new EscalationRecord(incidentId, after.title(), actor.id(), actor.name(), command.reason(),
-                        before.severity(), after.severity(), before.teamId(), fromTeamName, after.teamId(),
-                        toTeamName),
-                new EscalationRecipients(
-                        teamRecipients(after.teamId()),
-                        handedOver ? organization.getActiveMembers(before.teamId()) : List.of(),
-                        reporterRecipient(after, actor).stream().findFirst()));
-        return after;
+    /**
+     * De-escalates: severity goes down, and the incident may be handed over to another active team. Recorded and
+     * emailed like an escalation. By a member of the owning team.
+     */
+    public IncidentView deEscalateIncident(UUID actorId, UUID incidentId, EscalateCommand command) {
+        Actor actor = organization.getActiveActor(actorId);
+        if (command.targetTeamId() != null) {
+            organization.requireActiveTeam(command.targetTeamId());
+        }
+        IncidentChange change = incidents.deEscalate(actor, incidentId, command.severity(), command.targetTeamId());
+        return recordEscalation(actor, AuditAction.DE_ESCALATED, change, command);
     }
 
     /**
@@ -310,9 +374,65 @@ public class IncidentManagementController {
         return actor;
     }
 
-    private void auditStatusChange(Actor actor, IncidentChange change, String correlationId) {
-        audit(actor, AuditAction.STATUS_CHANGED, change.after().id(), correlationId,
-                "from", change.before().status().name(), "to", change.after().status().name());
+    /**
+     * Audits an escalation or de-escalation; the escalations module records it and emails the owning team, the
+     * previous team (if handed over) and the reporter.
+     */
+    private IncidentView recordEscalation(Actor actor, AuditAction action, IncidentChange change,
+                                          EscalateCommand command) {
+        IncidentView before = change.before();
+        IncidentView after = change.after();
+        UUID incidentId = after.id();
+        audit(actor, action, incidentId, newCorrelationId(),
+                "fromSeverity", before.severity().name(), "toSeverity", after.severity().name(),
+                "fromTeam", before.teamId().toString(), "toTeam", after.teamId().toString(),
+                "reason", command.reason());
+
+        boolean handedOver = !before.teamId().equals(after.teamId());
+        String fromTeamName = organization.getTeam(before.teamId()).name();
+        String toTeamName = handedOver ? organization.getTeam(after.teamId()).name() : fromTeamName;
+        escalations.recordAndNotify(
+                new EscalationRecord(incidentId, after.title(), actor.id(), actor.name(), command.reason(),
+                        before.severity(), after.severity(), before.teamId(), fromTeamName, after.teamId(),
+                        toTeamName),
+                new EscalationRecipients(
+                        teamRecipients(after.teamId()),
+                        handedOver ? organization.getActiveMembers(before.teamId()) : List.of(),
+                        reporterRecipient(after, actor).stream().findFirst()));
+        return after;
+    }
+
+    /**
+     * Audits a status change and emails whoever should know about this step.
+     */
+    private IncidentView afterStatusChange(Actor actor, IncidentChange change, String note) {
+        IncidentStatus from = change.before().status();
+        IncidentView incident = change.after();
+        IncidentStatus to = incident.status();
+        if (note == null || note.isBlank()) {
+            audit(actor, AuditAction.STATUS_CHANGED, incident.id(), newCorrelationId(),
+                    "from", from.name(), "to", to.name());
+        } else {
+            audit(actor, AuditAction.STATUS_CHANGED, incident.id(), newCorrelationId(),
+                    "from", from.name(), "to", to.name(), "note", note.strip());
+        }
+
+        if (to == IncidentStatus.IN_PROGRESS && from == IncidentStatus.OPEN) {
+            notifications.notifyIncident(notice(incident, NotificationReason.INCIDENT_ACKNOWLEDGED, null),
+                    reporterRecipient(incident, actor));
+        } else if (to == IncidentStatus.IN_PROGRESS && from == IncidentStatus.RESOLVED) {
+            notifyTeamAndReporter(actor, incident, NotificationReason.INCIDENT_REOPENED, note);
+        } else if (to == IncidentStatus.RESOLVED) {
+            notifyTeamAndReporter(actor, incident, NotificationReason.INCIDENT_RESOLVED, note);
+        } else if (to == IncidentStatus.CANCELLED) {
+            notifyTeamAndReporter(actor, incident, NotificationReason.INCIDENT_CANCELLED, note);
+        }
+        return incident;
+    }
+
+    private void notifyTeamAndReporter(Actor actor, IncidentView incident, NotificationReason reason, String note) {
+        notifications.notifyIncident(notice(incident, reason, note),
+                union(teamRecipients(incident.teamId()), reporterRecipient(incident, actor)));
     }
 
     /**

@@ -10,6 +10,8 @@ import org.springframework.data.repository.query.Param;
 
 public interface TeamRepository extends JpaRepository<Team, UUID> {
 
+    List<Team> findAllByOrderByName();
+
     /**
      * Ids of non-archived teams the user is a member of.
      */

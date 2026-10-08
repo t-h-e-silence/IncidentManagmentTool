@@ -6,6 +6,9 @@ import java.util.UUID;
 
 import org.example.common.model.Severity;
 
+/**
+ * @param closedAt when it was closed or cancelled
+ */
 public record IncidentView(
         UUID id,
         String title,
@@ -22,5 +25,6 @@ public record IncidentView(
         Instant resolvedAt,
         UUID resolvedBy,
         String resolutionNote,
+        Instant closedAt,
         List<CommentView> comments) {
 }

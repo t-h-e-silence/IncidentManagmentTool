@@ -20,6 +20,7 @@ import org.example.common.model.TeamRole;
 import org.example.organization.model.Category;
 import org.example.organization.model.Team;
 import org.example.organization.model.TeamMemberView;
+import org.example.organization.model.TeamView;
 import org.example.organization.model.User;
 import org.example.organization.repository.CategoryRepository;
 import org.example.organization.repository.TeamRepository;
@@ -72,6 +73,17 @@ class OrganizationServiceImplTest {
     }
 
     @Test
+    void userIsFoundByIdOrUsername() {
+        when(users.findByUsername("alice")).thenReturn(Optional.of(alice));
+        when(users.findByUsername("nobody")).thenReturn(Optional.empty());
+
+        assertThat(service.findUserId(alice.getId().toString())).contains(alice.getId());
+        assertThat(service.findUserId(" Alice ")).contains(alice.getId());
+        assertThat(service.findUserId("nobody")).isEmpty();
+        assertThat(service.findUserId(" ")).isEmpty();
+    }
+
+    @Test
     void routingOfInactiveOrUnknownCategoryIsNotFound() {
         Category vpn = new Category(UUID.randomUUID(), "VPN", database.getId());
         vpn.deactivate();
@@ -92,6 +104,20 @@ class OrganizationServiceImplTest {
                 .containsExactly(new Recipient(alice.getId(), "Alice", "alice@example.com"));
         assertThat(service.getTeam(database.getId()).members()).extracting(TeamMemberView::role)
                 .containsExactly(TeamRole.TEAM_LEAD);
+    }
+
+    @Test
+    void listsAllTeamsIncludingArchivedWithActiveMembers() {
+        Team platform = new Team(UUID.randomUUID(), "Platform", dan.getId(), TeamRole.TEAM_LEAD);
+        platform.archive(Instant.now());
+        when(teams.findAllByOrderByName()).thenReturn(List.of(database, platform));
+        when(users.findAllById(any())).thenReturn(List.of(alice, dan));
+
+        List<TeamView> all = service.listTeams();
+
+        assertThat(all).extracting(TeamView::name).containsExactly("Database", "Platform");
+        assertThat(all).extracting(TeamView::archived).containsExactly(false, true);
+        assertThat(all.get(0).members()).extracting(TeamMemberView::name).containsExactly("Alice");
     }
 
     @Test

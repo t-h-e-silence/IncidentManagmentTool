@@ -14,7 +14,7 @@ import org.example.common.model.Severity;
 import org.hibernate.annotations.Immutable;
 
 /**
- * One escalation of an incident. Never changed after it is recorded.
+ * One escalation or de-escalation of an incident. Never changed after it is recorded.
  */
 @Entity
 @Immutable
@@ -67,7 +67,9 @@ public class Escalation {
     }
 
     public EscalationView toView() {
-        return new EscalationView(id, incidentId, actorId, reason, fromSeverity, toSeverity, fromTeamId, toTeamId,
-                escalatedAt);
+        EscalationDirection direction = toSeverity.isHigherThan(fromSeverity)
+                ? EscalationDirection.UP : EscalationDirection.DOWN;
+        return new EscalationView(id, incidentId, actorId, direction, reason, fromSeverity, toSeverity, fromTeamId,
+                toTeamId, escalatedAt);
     }
 }

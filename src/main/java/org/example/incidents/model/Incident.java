@@ -81,6 +81,10 @@ public class Incident {
     @Column(name = "resolution_note", length = NOTE_MAX_LENGTH)
     private String resolutionNote;
 
+    /** When it was closed or cancelled. */
+    @Column(name = "closed_at")
+    private Instant closedAt;
+
     @OneToMany(mappedBy = "incident", cascade = CascadeType.ALL)
     @OrderBy("createdAt")
     private List<Comment> comments = new ArrayList<>();
@@ -115,27 +119,77 @@ public class Incident {
         if (status != IncidentStatus.OPEN) {
             throw new BusinessRuleException("Only an OPEN incident can be acknowledged, status is " + status);
         }
-        status = IncidentStatus.IN_PROGRESS;
-        acknowledgedAt = now;
+        changeStatus(IncidentStatus.IN_PROGRESS, null, null, now);
+    }
+
+    /**
+     * {@code IN_REVIEW -> RESOLVED} with a note.
+     */
+    public void resolve(UUID resolvedBy, String note, Instant now) {
+        changeStatus(IncidentStatus.RESOLVED, resolvedBy, note, now);
+    }
+
+    /**
+     * Moves along the lifecycle of {@link IncidentStatus}. A note is required to resolve, to cancel and to reopen
+     * a resolved incident; it is kept as the resolution note when resolving.
+     *
+     * @param actorId who makes the change
+     * @param note    optional otherwise
+     */
+    public void changeStatus(IncidentStatus target, UUID actorId, String note, Instant now) {
+        Objects.requireNonNull(target, "status");
+        if (!status.canMoveTo(target)) {
+            throw new BusinessRuleException("Incident " + id + " cannot go from " + status + " to " + target);
+        }
+        IncidentStatus from = status;
+        switch (target) {
+            case IN_PROGRESS -> {
+                if (from == IncidentStatus.OPEN) {
+                    acknowledgedAt = now;
+                } else if (from == IncidentStatus.RESOLVED) {
+                    Text.require(note, "reopen reason", NOTE_MAX_LENGTH);
+                    resolvedAt = null;
+                    resolvedBy = null;
+                    resolutionNote = null;
+                }
+            }
+            case RESOLVED -> {
+                resolutionNote = Text.require(note, "resolution note", NOTE_MAX_LENGTH);
+                resolvedBy = Objects.requireNonNull(actorId, "actorId");
+                resolvedAt = now;
+            }
+            case CANCELLED -> {
+                Text.require(note, "cancel reason", NOTE_MAX_LENGTH);
+                closedAt = now;
+            }
+            case CLOSED -> closedAt = now;
+            case OPEN, IN_REVIEW -> {
+                // nothing else changes
+            }
+        }
+        status = target;
         updatedAt = now;
     }
 
     /**
-     * {@code OPEN | IN_PROGRESS -> RESOLVED}; final.
+     * Changes the title and/or the description; null keeps the current value, a blank description clears it.
      */
-    public void resolve(UUID resolvedBy, String note, Instant now) {
-        requireNotResolved();
-        String checkedNote = Text.require(note, "resolution note", NOTE_MAX_LENGTH);
-        status = IncidentStatus.RESOLVED;
-        this.resolvedBy = Objects.requireNonNull(resolvedBy, "resolvedBy");
-        this.resolutionNote = checkedNote;
-        resolvedAt = now;
+    public void updateDetails(String newTitle, String newDescription, Instant now) {
+        requireActive();
+        String checkedTitle = newTitle == null ? title : Text.require(newTitle, "title", TITLE_MAX_LENGTH);
+        String checkedDescription = newDescription == null ? description
+                : newDescription.isBlank() ? "" : Text.require(newDescription, "description", DESCRIPTION_MAX_LENGTH);
+        if (checkedTitle.equals(title) && checkedDescription.equals(description)) {
+            throw new BusinessRuleException("Nothing to change in incident " + id);
+        }
+        title = checkedTitle;
+        description = checkedDescription;
         updatedAt = now;
     }
 
     public void changeSeverity(Severity newSeverity, Instant now) {
         Objects.requireNonNull(newSeverity, "severity");
-        requireNotResolved();
+        requireActive();
         if (newSeverity == severity) {
             throw new BusinessRuleException("Severity is already " + severity);
         }
@@ -148,7 +202,7 @@ public class Incident {
      */
     public void reassign(UUID targetTeamId, Instant now) {
         Objects.requireNonNull(targetTeamId, "targetTeamId");
-        requireNotResolved();
+        requireActive();
         if (targetTeamId.equals(teamId)) {
             throw new BusinessRuleException("Incident is already owned by team " + teamId);
         }
@@ -166,37 +220,44 @@ public class Incident {
      */
     public void escalate(Severity newSeverity, UUID targetTeamId, Instant now) {
         Objects.requireNonNull(newSeverity, "severity");
-        requireNotResolved();
+        requireActive();
         if (!newSeverity.isHigherThan(severity)) {
             throw new BusinessRuleException("An escalation must raise severity above " + severity);
         }
-        if (targetTeamId != null) {
-            reassign(targetTeamId, now);
+        changeSeverityAndTeam(newSeverity, targetTeamId, now);
+    }
+
+    /**
+     * De-escalation: severity must go down; optionally hands the incident over to another team, which makes it
+     * {@code OPEN} again for that team.
+     *
+     * @param targetTeamId new owning team, or null to keep the current one
+     */
+    public void deEscalate(Severity newSeverity, UUID targetTeamId, Instant now) {
+        Objects.requireNonNull(newSeverity, "severity");
+        requireActive();
+        if (!severity.isHigherThan(newSeverity)) {
+            throw new BusinessRuleException("A de-escalation must lower severity below " + severity);
         }
-        severity = newSeverity;
-        updatedAt = now;
+        changeSeverityAndTeam(newSeverity, targetTeamId, now);
     }
 
     public Comment addComment(UUID authorId, String text, Instant now) {
-        requireNotResolved();
+        requireActive();
         Comment comment = new Comment(this, authorId, text, now);
         comments.add(comment);
         updatedAt = now;
         return comment;
     }
 
-    public boolean isResolved() {
-        return status == IncidentStatus.RESOLVED;
-    }
-
     public IncidentView toView() {
         return new IncidentView(id, title, description, categoryId, categoryName, teamId, reporterId, severity,
-                status, createdAt, updatedAt, acknowledgedAt, resolvedAt, resolvedBy, resolutionNote,
+                status, createdAt, updatedAt, acknowledgedAt, resolvedAt, resolvedBy, resolutionNote, closedAt,
                 comments.stream().map(Comment::toView).toList());
     }
 
     public IncidentSummary toSummary() {
-        return new IncidentSummary(id, title, teamId, severity, status, createdAt);
+        return new IncidentSummary(id, title, teamId, reporterId, severity, status, createdAt);
     }
 
     public UUID getId() {
@@ -219,9 +280,17 @@ public class Incident {
         return status;
     }
 
-    private void requireNotResolved() {
-        if (status == IncidentStatus.RESOLVED) {
-            throw new BusinessRuleException("Incident " + id + " is resolved and can no longer change");
+    private void changeSeverityAndTeam(Severity newSeverity, UUID targetTeamId, Instant now) {
+        if (targetTeamId != null) {
+            reassign(targetTeamId, now);
+        }
+        severity = newSeverity;
+        updatedAt = now;
+    }
+
+    private void requireActive() {
+        if (!status.isActive()) {
+            throw new BusinessRuleException("Incident " + id + " is " + status + " and can no longer change");
         }
     }
 }

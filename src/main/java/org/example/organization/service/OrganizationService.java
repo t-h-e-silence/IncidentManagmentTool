@@ -23,6 +23,12 @@ public interface OrganizationService {
     Actor getActiveActor(UUID userId);
 
     /**
+     * The id of a user given by id or by username (e.g. {@code bob}); empty if no user has that username.
+     * Says nothing about whether the user may act: that is {@link #getActiveActor}.
+     */
+    Optional<UUID> findUserId(String userIdOrUsername);
+
+    /**
      * Active categories a reporter can choose, by name.
      */
     List<CategoryView> listActiveCategories();
@@ -31,6 +37,11 @@ public interface OrganizationService {
      * @throws org.example.common.exception.NotFoundException if the category is unknown or inactive
      */
     CategoryRouting getRouting(UUID categoryId);
+
+    /**
+     * All teams, archived ones included, by name; each with its active members.
+     */
+    List<TeamView> listTeams();
 
     /**
      * @throws org.example.common.exception.NotFoundException if the team is unknown

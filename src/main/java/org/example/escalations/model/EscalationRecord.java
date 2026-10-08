@@ -7,7 +7,7 @@ import org.example.common.model.Severity;
 import org.example.common.model.Text;
 
 /**
- * What happened in one escalation, with the names needed for the emails.
+ * What happened in one escalation or de-escalation, with the names needed for the emails.
  *
  * @param fromTeamId owning team before; equal to {@code toTeamId} if the incident was not handed over
  */
@@ -29,6 +29,13 @@ public record EscalationRecord(UUID incidentId, String incidentTitle, UUID actor
         Objects.requireNonNull(fromTeamName, "fromTeamName");
         Objects.requireNonNull(toTeamId, "toTeamId");
         Objects.requireNonNull(toTeamName, "toTeamName");
+        if (fromSeverity == toSeverity) {
+            throw new IllegalArgumentException("An escalation must change severity");
+        }
+    }
+
+    public EscalationDirection direction() {
+        return toSeverity.isHigherThan(fromSeverity) ? EscalationDirection.UP : EscalationDirection.DOWN;
     }
 
     public boolean handedOver() {

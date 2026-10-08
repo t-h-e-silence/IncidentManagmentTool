@@ -9,6 +9,7 @@ import java.util.UUID;
 
 import org.example.common.model.Recipient;
 import org.example.escalations.model.Escalation;
+import org.example.escalations.model.EscalationDirection;
 import org.example.escalations.model.EscalationRecipients;
 import org.example.escalations.model.EscalationRecord;
 import org.example.escalations.model.EscalationView;
@@ -73,8 +74,9 @@ public class EscalationServiceImpl implements EscalationService {
     private static void add(List<EmailMessage> messages, Set<UUID> done, EscalationRecord record,
                             Recipient recipient, String subject, String body) {
         if (done.add(recipient.userId())) {
-            messages.add(new EmailMessage(record.incidentId(), recipient, NotificationReason.INCIDENT_ESCALATED,
-                    subject, body));
+            NotificationReason reason = record.direction() == EscalationDirection.UP
+                    ? NotificationReason.INCIDENT_ESCALATED : NotificationReason.INCIDENT_DEESCALATED;
+            messages.add(new EmailMessage(record.incidentId(), recipient, reason, subject, body));
         }
     }
 }

@@ -1,5 +1,6 @@
 -- Demo/test data, loaded only with the `seed` profile. Fixed ids, so they can be used as actor ids.
 --   users      20000000-...-00N    teams      10000000-...-00N    categories 30000000-...-00N
+-- Users also have a username (ada, alice, bob, carol, dan, erin), accepted by the HTTP API instead of the id.
 -- Re-runnable: existing rows are left unchanged.
 
 insert into organization.app_user (id, name, email, system_role)
@@ -10,6 +11,18 @@ values ('20000000-0000-0000-0000-000000000001', 'Ada Admin', 'ada.admin@example.
        ('20000000-0000-0000-0000-000000000005', 'Dan Dba', 'dan@example.com', 'USER'),
        ('20000000-0000-0000-0000-000000000006', 'Erin Network', 'erin@example.com', 'USER')
 on conflict (id) do nothing;
+
+-- Separate from the insert, so databases seeded before usernames existed get them too.
+update organization.app_user u
+set username = v.username
+from (values ('20000000-0000-0000-0000-000000000001'::uuid, 'ada'),
+             ('20000000-0000-0000-0000-000000000002'::uuid, 'alice'),
+             ('20000000-0000-0000-0000-000000000003'::uuid, 'bob'),
+             ('20000000-0000-0000-0000-000000000004'::uuid, 'carol'),
+             ('20000000-0000-0000-0000-000000000005'::uuid, 'dan'),
+             ('20000000-0000-0000-0000-000000000006'::uuid, 'erin')) as v (id, username)
+where u.id = v.id
+  and u.username is null;
 
 insert into organization.team (id, name)
 values ('10000000-0000-0000-0000-000000000001', 'Platform'),

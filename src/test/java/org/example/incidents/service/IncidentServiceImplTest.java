@@ -8,6 +8,7 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -18,6 +19,7 @@ import org.example.common.model.Severity;
 import org.example.incidents.model.Incident;
 import org.example.incidents.model.IncidentChange;
 import org.example.incidents.model.IncidentStatus;
+import org.example.incidents.model.IncidentSummary;
 import org.example.incidents.model.IncidentView;
 import org.example.incidents.model.ReportIncidentCommand;
 import org.example.incidents.repository.IncidentRepository;
@@ -140,6 +142,53 @@ class IncidentServiceImplTest {
         assertThat(change.before().severity()).isEqualTo(Severity.SEV2);
         assertThat(change.after().severity()).isEqualTo(Severity.SEV1);
         assertThat(change.after().teamId()).isEqualTo(PLATFORM);
+    }
+
+    @Test
+    void teamQueueAsksForActiveStatusesOnly() {
+        when(repository.findByTeamIdAndStatusInOrderBySeverityAscCreatedAtAsc(DATABASE, IncidentStatus.ACTIVE))
+                .thenReturn(List.of(incident));
+
+        assertThat(service.listTeamQueue(DATABASE)).extracting(IncidentSummary::id).containsExactly(incident.getId());
+    }
+
+    @Test
+    void teamMemberMovesTheStatusOthersMayNot() {
+        stored();
+        saves();
+
+        assertThatThrownBy(() -> service.changeStatus(BOB, incident.getId(), IncidentStatus.CANCELLED, "dup"))
+                .isInstanceOf(ForbiddenException.class);
+
+        IncidentChange change = service.changeStatus(DAN, incident.getId(), IncidentStatus.CANCELLED, "duplicate");
+
+        assertThat(change.after().status()).isEqualTo(IncidentStatus.CANCELLED);
+    }
+
+    @Test
+    void reporterAndTeamMayEditDetailsOthersMayNot() {
+        stored();
+        saves();
+
+        assertThat(service.updateDetails(BOB, incident.getId(), "Primary DB down", null).after().title())
+                .isEqualTo("Primary DB down");
+        assertThat(service.updateDetails(DAN, incident.getId(), null, "writes fail").after().description())
+                .isEqualTo("writes fail");
+        assertThatThrownBy(() -> service.updateDetails(CAROL, incident.getId(), "x", null))
+                .isInstanceOf(ForbiddenException.class);
+    }
+
+    @Test
+    void onlyTheOwningTeamDeEscalates() {
+        stored();
+        saves();
+
+        assertThatThrownBy(() -> service.deEscalate(CAROL, incident.getId(), Severity.SEV4, null))
+                .isInstanceOf(ForbiddenException.class);
+
+        IncidentChange change = service.deEscalate(DAN, incident.getId(), Severity.SEV4, null);
+
+        assertThat(change.after().severity()).isEqualTo(Severity.SEV4);
     }
 
     @Test

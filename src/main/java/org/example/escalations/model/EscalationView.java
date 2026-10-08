@@ -5,6 +5,6 @@ import java.util.UUID;
 
 import org.example.common.model.Severity;
 
-public record EscalationView(UUID id, UUID incidentId, UUID actorId, String reason, Severity fromSeverity,
+public record EscalationView(UUID id, UUID incidentId, UUID actorId, EscalationDirection direction, String reason, Severity fromSeverity,
                              Severity toSeverity, UUID fromTeamId, UUID toTeamId, Instant escalatedAt) {
 }

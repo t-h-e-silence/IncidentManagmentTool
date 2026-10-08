@@ -1,9 +1,9 @@
+server:
+  port: ${PORT:8080}
+
 spring:
   application:
     name: incident-management
-  main:
-    # No web server: keep the process running for the scheduled email delivery.
-    keep-alive: true
   datasource:
     url: ${DB_URL:jdbc:postgresql://localhost:5432/incidents}
     username: ${DB_USER:incidents}
@@ -22,6 +22,10 @@ spring:
       - classpath:db/migration/notifications
       - classpath:db/migration/escalations
     schemas: organization,incidents,audit,notifications,escalations
+    # Version ranges are per module, so a new migration of one module (e.g. V202) is usually lower than ones
+    # already applied for other modules (V501). Each module touches only its own schema, so order across modules
+    # does not matter.
+    out-of-order: true
   mail:
     host: ${SMTP_HOST:localhost}
     port: ${SMTP_PORT:1025}
