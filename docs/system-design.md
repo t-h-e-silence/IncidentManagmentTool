@@ -6,7 +6,7 @@
 [development-plan.md](development-plan.md) (build steps and progress).
 
 The product design says *what* and *why*; this document describes *how the code does it*. Decisions taken while
-building (no HTTP, severity only, manual escalation only) are recorded in the development plan.
+building (HTTP only as a thin test API, severity only, manual escalation only) are recorded in the development plan.
 
 ---
 
@@ -14,8 +14,10 @@ building (no HTTP, severity only, manual escalation only) are recorded in the de
 Users **report, acknowledge, comment on, escalate, reassign and resolve** incidents. Each incident is owned by **one
 team** at a time, the right people are **emailed**, and every significant action leaves an **append-only audit entry**.
 
-The system is **one Spring Boot application** (monolith) with **no HTTP API**. Users call Java methods on a single
-entry point, `IncidentManagementController`, which orchestrates five modules. Each module has `model/`, `repository/`
+The system is **one Spring Boot application** (monolith). Users call Java methods on a single
+entry point, `IncidentManagementController`, a REST controller that orchestrates five modules (the caller is the
+`X-User-Id` header, no login). Endpoints: list teams; list incidents (all, by team, by user); create; one `PATCH` for
+name, description, severity (escalation / de-escalation) and status; view, comment and audit history. Each module has `model/`, `repository/`
 and `service/` (`XxxService` interface + `XxxServiceImpl`) and its own PostgreSQL schema.
 
 | Module | Responsible for | Schema | Service |
@@ -56,28 +58,26 @@ flowchart TD
 - **Does not:** contain business rules about incidents (those are in `incidents`), write SQL or send emails.
 
 ### organization
-- **Does:** who may act (`getActiveActor`: active, not SYSTEM, with team ids); active categories and their team;
-  teams with active members; recipients (members, admins, a single user); checks a team is active.
-- **Enforces:** unique email (stored lower-case) and names; a team keeps ≥ 1 member; archived teams can't change.
+- **Does:** who may act (`getActiveActor`: active, not SYSTEM, with team ids; users by id or username); a category's
+  team; teams with active members; recipients (members, admins, a single user); checks a team is active.
+- **Enforces:** unique email (stored lower-case), username and names; no duplicate members; archived teams can't change.
 - **Does not:** know about incidents. Users, teams and categories are seeded (no admin functions yet).
 
 ### incidents
-- **Does:** create, read, team queue, my reported incidents; acknowledge, resolve, change severity, escalate,
-  reassign, comment.
+- **Does:** create, read, list (all, by team, by reporter); edit name/description; change status; escalate (optionally
+  handing over to another team), de-escalate; comment.
 - **Enforces:** the lifecycle; who may do what (§5); a reporter may set at most SEV2; an escalation must raise
   severity; a resolved incident is read-only; concurrent changes (`@Version`) → "changed concurrently, retry".
 - **Does not:** email anyone or write audit entries (the Controller does).
 
 ### audit
-- **Does:** appends entries (actor, action, entity, incident, details, correlation id, time); incident timeline;
-  a user's activity.
+- **Does:** appends entries (actor, action, entity, incident, details, correlation id, time); incident history.
 - **Enforces:** append-only — no update/delete methods, `@Immutable` entity, and a database trigger that rejects
   `UPDATE`/`DELETE`.
 
 ### notifications
-- **Does:** renders regular incident emails (created, acknowledged, resolved, reassigned); stores one `PENDING` row
-  per recipient in the caller's transaction; `EmailDeliveryJob` sends due rows every 10 s over SMTP; replay of dead
-  letters.
+- **Does:** renders regular incident emails (created, acknowledged, resolved, reopened, cancelled); stores one
+  `PENDING` row per recipient in the caller's transaction; `EmailDeliveryJob` sends due rows every 10 s over SMTP.
 - **Retries:** after 1, 5 and 15 minutes (4 attempts), then `DEAD_LETTERED` with an ERROR log.
 - **Does not:** decide who is notified (the Controller passes recipients).
 
@@ -114,7 +114,7 @@ sequenceDiagram
     participant I as incidents
     participant A as audit
     participant N as notifications
-    R->>C: reportIncident(actorId, {title, description, categoryId, severity})
+    R->>C: POST /incidents {title, description, categoryId, severity}
     C->>O: getActiveActor, getRouting(categoryId)
     Note over C,N: ONE transaction
     C->>I: create(actor, command, categoryName, teamId)
@@ -135,7 +135,7 @@ sequenceDiagram
     participant A as audit
     participant E as escalations
     participant N as notifications
-    M->>C: escalateIncident(actorId, incidentId, {severity, targetTeamId?, reason})
+    M->>C: PATCH /incidents/{id} {severity (higher), targetTeamId?, reason}
     C->>O: getActiveActor, requireActiveTeam(target)
     Note over C,N: ONE transaction
     C->>I: escalate(actor, id, severity, target) → before/after
@@ -148,12 +148,12 @@ sequenceDiagram
 ### 4.3 Other actions
 | Action | Audit | Emails |
 |---|---|---|
+| edit name / description | `DETAILS_UPDATED` | none |
 | acknowledge (`OPEN → IN_PROGRESS`) | `STATUS_CHANGED` | reporter |
-| resolve (with note) | `STATUS_CHANGED` | owning team + reporter |
-| change severity (up or down) | `SEVERITY_CHANGED` | none |
-| reassign (another team, same severity; back to `OPEN`) | `REASSIGNED` + reason | new team + reporter |
+| resolve, reopen, cancel (with reason) | `STATUS_CHANGED` + note | owning team + reporter |
+| review, back to work, close | `STATUS_CHANGED` | none |
+| de-escalate (severity down, same team) | `DE_ESCALATED` + reason | owning team + reporter (escalations module) |
 | comment | `COMMENT_ADDED` | none |
-| replay a dead letter (admin) | `NOTIFICATION_REPLAYED` | the replayed email |
 
 Recipients never include the person acting, and nobody gets the same email twice.
 
@@ -161,33 +161,40 @@ Recipients never include the person acting, and nobody gets the same email twice
 
 ## 5. Incident rules
 
-**Severity** — impact: `SEV1` (critical) … `SEV4` (low). The only urgency measure: it orders the team queue
-(most severe first, then oldest). A reporter may set at most `SEV2`.
+**Severity** — impact: `SEV1` (critical) … `SEV4` (low). The only urgency measure. A reporter may set at most `SEV2`.
 
 **Lifecycle:**
 ```mermaid
 stateDiagram-v2
     [*] --> OPEN: reported
     OPEN --> IN_PROGRESS: acknowledge
-    IN_PROGRESS --> RESOLVED: resolve(note)
-    OPEN --> RESOLVED: resolve(note), e.g. duplicate
-    IN_PROGRESS --> OPEN: handed over to another team (reassign / escalate)
-    RESOLVED --> [*]
+    IN_PROGRESS --> IN_REVIEW: submit for review
+    IN_REVIEW --> IN_PROGRESS: back to work
+    IN_REVIEW --> RESOLVED: resolve(note)
+    RESOLVED --> IN_PROGRESS: reopen(reason)
+    RESOLVED --> CLOSED: close
+    OPEN --> CANCELLED: cancel(reason)
+    IN_PROGRESS --> CANCELLED: cancel(reason)
+    IN_REVIEW --> CANCELLED: cancel(reason)
+    IN_PROGRESS --> OPEN: handed over to another team (escalation)
+    CLOSED --> [*]
+    CANCELLED --> [*]
 ```
+Only `OPEN`, `IN_PROGRESS` and `IN_REVIEW` incidents can be commented on, edited (title, description), escalated or
+de-escalated.
 
 **Escalation** — a member of the owning team raises severity, with a reason, and may hand the incident over to
-another active team. It is never time-based. **Reassignment** moves it to another team without raising severity.
+another active team. It is never time-based. **De-escalation** is the same with severity going down; both are
+recorded by the escalations module and emailed, but only an escalation can hand the incident over.
 
 **Who may do what:**
 | Function | Who |
 |---|---|
-| report, read incident, my incidents, team queue, timeline, notifications, escalations | any active user |
-| comment | members of the owning team, the reporter |
-| acknowledge, resolve, change severity, escalate | members of the **current** owning team |
-| reassign | members of the owning team, `ADMIN` |
-| dead letters, replay, user activity | `ADMIN` |
+| list teams and incidents, create, read incident, history | any active user |
+| comment, edit name / description | members of the owning team, the reporter |
+| change status, escalate, de-escalate | members of the **current** owning team |
 
-`TEAM_LEAD` has no extra rights yet. Errors: `UnauthenticatedException`, `ForbiddenException`, `NotFoundException`,
+`TEAM_LEAD` and `ADMIN` have no extra rights yet (admins receive the emails of teams without active members). Errors: `UnauthenticatedException`, `ForbiddenException`, `NotFoundException`,
 `BusinessRuleException`.
 
 **Timestamps for metrics:** `created_at → acknowledged_at` (time to acknowledge), `created_at → resolved_at`
@@ -200,12 +207,14 @@ another active team. It is never time-based. **Reassignment** moves it to anothe
 |---|---|
 | `id` | The only reference other modules keep (reporter, author, recipient, actor); never reused |
 | `name`, `email` (unique, lower-case) | Shown in emails; email is the only channel |
-| `system_role` | `USER`, `ADMIN` (reassign anything, dead letters, activity), `SYSTEM` (author of future automatic actions; cannot act) |
+| `username` | Short, unique handle (e.g. `bob`) accepted in `X-User-Id` instead of the id |
+| `system_role` | `USER`, `ADMIN` (fallback email recipient), `SYSTEM` (author of future automatic actions; cannot act) |
 | memberships `team_id` + `role` | Who may change an incident; who is emailed |
 | `active`, `deactivated_at` | Deactivated users keep their id in history but can't act and aren't emailed |
 
 Personal data stays in `organization`; notifications copy the address only to send; audit details hold ids.
-There is **no login** yet: callers pass the acting user id, and unknown, deactivated or SYSTEM users are rejected.
+There is **no login** yet: callers pass the acting user id or username, and unknown, deactivated or SYSTEM users are
+rejected. Users, teams and categories come from the seed; there are no admin functions to change them yet.
 
 ---
 
@@ -213,7 +222,7 @@ There is **no login** yet: callers pass the acting user id, and unknown, deactiv
 - **One transaction per action:** if any step fails (e.g. the audit insert), the incident change, the audit entry,
   the notification rows and the escalation record are all rolled back.
 - **SMTP down:** actions still succeed; emails stay `RETRYING` and are sent later, or are dead-lettered after
-  ~21 minutes and can be replayed by an admin.
+  ~21 minutes with an ERROR log (no replay function yet).
 - **Crash after commit:** pending emails are rows in the database and are sent after restart.
 - **Two people change the same incident:** the second gets "changed concurrently, retry".
 - **Several instances:** the email job locks rows with `FOR UPDATE SKIP LOCKED`, so an email is not sent twice at the same time.
@@ -225,4 +234,4 @@ There is **no login** yet: callers pass the acting user id, and unknown, deactiv
 2. Which actions become `TEAM_LEAD`-only: resolving SEV1, lowering severity, reassigning?
 3. Is `RESOLVED` final, or can an incident be reopened?
 4. Confidential incidents with restricted read access (e.g. security incidents)?
-5. HTTP API or UI on top of the Controller, and login (OIDC)?
+5. UI on top of the HTTP API, and login (OIDC) instead of the `X-User-Id` header?

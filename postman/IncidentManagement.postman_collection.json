@@ -1,0 +1,874 @@
+{
+  "info": {
+    "name": "Incident Management",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+    "description": "Every endpoint of the controller. Start the app with the seed profile (see README). The caller is the X-User-Id header: a username (ada, alice, bob, carol, dan, erin) or a user id. {{bob}} = bob; {{bobId}} etc. hold the ids. Run 'Create incident' first: it stores {{incidentId}}. The requests are a catalogue, not a sequence; for ordered, tested runs use the 'flows' collection."
+  },
+  "item": [
+    {
+      "name": "1. Teams",
+      "item": [
+        {
+          "name": "List teams",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-User-Id",
+                "value": "{{bob}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/teams",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "teams"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "2. List incidents",
+      "item": [
+        {
+          "name": "All incidents",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-User-Id",
+                "value": "{{bob}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/incidents",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "incidents"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Incidents of a team (Database)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-User-Id",
+                "value": "{{dan}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/teams/{{teamDatabase}}/incidents",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "teams",
+                "{{teamDatabase}}",
+                "incidents"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Incidents reported by a user (bob)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-User-Id",
+                "value": "{{dan}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/users/{{bob}}/incidents",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "users",
+                "{{bob}}",
+                "incidents"
+              ]
+            },
+            "description": "The user is a username or a user id."
+          }
+        }
+      ]
+    },
+    {
+      "name": "3. Create incident",
+      "item": [
+        {
+          "name": "Create incident (Bob, Database category)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-User-Id",
+                "value": "{{bob}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/incidents",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "incidents"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"title\": \"DB slow\",\n  \"description\": \"timeouts on checkout\",\n  \"categoryId\": \"{{categoryDatabase}}\",\n  \"severity\": \"SEV2\"\n}"
+            },
+            "description": "The category decides the owning team. A reporter may set at most SEV2. Stores {{incidentId}}."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('201', () => pm.response.to.have.status(201));",
+                  "pm.collectionVariables.set('incidentId', pm.response.json().id);"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "4. Update incident (PATCH)",
+      "item": [
+        {
+          "name": "Name",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "X-User-Id",
+                "value": "{{bob}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/incidents/{{incidentId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "incidents",
+                "{{incidentId}}"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"title\": \"Primary DB slow\"\n}"
+            },
+            "description": "Owning team or reporter. Any field left out stays unchanged."
+          }
+        },
+        {
+          "name": "Description",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "X-User-Id",
+                "value": "{{bob}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/incidents/{{incidentId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "incidents",
+                "{{incidentId}}"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"description\": \"timeouts on checkout and login\"\n}"
+            }
+          }
+        },
+        {
+          "name": "Status: acknowledge (OPEN -> IN_PROGRESS)",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "X-User-Id",
+                "value": "{{dan}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/incidents/{{incidentId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "incidents",
+                "{{incidentId}}"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"status\": \"IN_PROGRESS\"\n}"
+            },
+            "description": "Owning team. Emails the reporter."
+          }
+        },
+        {
+          "name": "Severity up = escalation",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "X-User-Id",
+                "value": "{{dan}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/incidents/{{incidentId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "incidents",
+                "{{incidentId}}"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"severity\": \"SEV1\",\n  \"reason\": \"replica lag growing\"\n}"
+            },
+            "description": "Owning team; reason required. Recorded and emailed (team, reporter)."
+          }
+        },
+        {
+          "name": "Severity down = de-escalation",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "X-User-Id",
+                "value": "{{dan}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/incidents/{{incidentId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "incidents",
+                "{{incidentId}}"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"severity\": \"SEV3\",\n  \"reason\": \"contained\"\n}"
+            },
+            "description": "Owning team; reason required; stays with the team. Recorded and emailed."
+          }
+        },
+        {
+          "name": "Status: in review",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "X-User-Id",
+                "value": "{{dan}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/incidents/{{incidentId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "incidents",
+                "{{incidentId}}"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"status\": \"IN_REVIEW\"\n}"
+            }
+          }
+        },
+        {
+          "name": "Status: resolved (from IN_REVIEW)",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "X-User-Id",
+                "value": "{{dan}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/incidents/{{incidentId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "incidents",
+                "{{incidentId}}"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"status\": \"RESOLVED\",\n  \"reason\": \"index rebuilt\"\n}"
+            }
+          }
+        },
+        {
+          "name": "Status: reopen (RESOLVED -> IN_PROGRESS)",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "X-User-Id",
+                "value": "{{dan}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/incidents/{{incidentId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "incidents",
+                "{{incidentId}}"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"status\": \"IN_PROGRESS\",\n  \"reason\": \"slow again\"\n}"
+            }
+          }
+        },
+        {
+          "name": "Status: closed (from RESOLVED)",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "X-User-Id",
+                "value": "{{dan}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/incidents/{{incidentId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "incidents",
+                "{{incidentId}}"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"status\": \"CLOSED\"\n}"
+            }
+          }
+        },
+        {
+          "name": "Status: cancelled",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "X-User-Id",
+                "value": "{{dan}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/incidents/{{incidentId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "incidents",
+                "{{incidentId}}"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"status\": \"CANCELLED\",\n  \"reason\": \"duplicate\"\n}"
+            }
+          }
+        },
+        {
+          "name": "Several changes at once",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "X-User-Id",
+                "value": "{{dan}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/incidents/{{incidentId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "incidents",
+                "{{incidentId}}"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"title\": \"Primary DB down\",\n  \"severity\": \"SEV1\",\n  \"status\": \"IN_PROGRESS\",\n  \"reason\": \"outage\"\n}"
+            },
+            "description": "Applied in order: name/description, severity, status; all or nothing."
+          }
+        },
+        {
+          "name": "Escalation with hand-over to Platform",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "X-User-Id",
+                "value": "{{dan}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/incidents/{{incidentId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "incidents",
+                "{{incidentId}}"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"severity\": \"SEV1\",\n  \"targetTeamId\": \"{{teamPlatform}}\",\n  \"reason\": \"payments side\"\n}"
+            },
+            "description": "Only a raise may hand over. The incident becomes OPEN for Platform; afterwards act as {{carol}}."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Incident: view, comment, history",
+      "item": [
+        {
+          "name": "Get incident",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-User-Id",
+                "value": "{{bob}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/incidents/{{incidentId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "incidents",
+                "{{incidentId}}"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Add comment",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-User-Id",
+                "value": "{{bob}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/incidents/{{incidentId}}/comments",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "incidents",
+                "{{incidentId}}",
+                "comments"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"text\": \"checkout is affected\"\n}"
+            }
+          }
+        },
+        {
+          "name": "History (audit log)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-User-Id",
+                "value": "{{bob}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/incidents/{{incidentId}}/history",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "incidents",
+                "{{incidentId}}",
+                "history"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Errors",
+      "item": [
+        {
+          "name": "401 unknown user",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-User-Id",
+                "value": "{{unknownUser}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/incidents",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "incidents"
+              ]
+            }
+          }
+        },
+        {
+          "name": "400 nothing to update",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "X-User-Id",
+                "value": "{{dan}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/incidents/{{incidentId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "incidents",
+                "{{incidentId}}"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{}"
+            }
+          }
+        },
+        {
+          "name": "400 severity without reason",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "X-User-Id",
+                "value": "{{dan}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/incidents/{{incidentId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "incidents",
+                "{{incidentId}}"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"severity\": \"SEV1\"\n}"
+            }
+          }
+        },
+        {
+          "name": "403 reporter changes status",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "X-User-Id",
+                "value": "{{bob}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/incidents/{{incidentId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "incidents",
+                "{{incidentId}}"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"status\": \"CANCELLED\",\n  \"reason\": \"never mind\"\n}"
+            }
+          }
+        },
+        {
+          "name": "404 unknown incident",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-User-Id",
+                "value": "{{bob}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/incidents/00000000-0000-0000-0000-000000000000",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "incidents",
+                "00000000-0000-0000-0000-000000000000"
+              ]
+            }
+          }
+        },
+        {
+          "name": "409 reporter may not set SEV1",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-User-Id",
+                "value": "{{bob}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/incidents",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "incidents"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"title\": \"Everything down\",\n  \"categoryId\": \"{{categoryDatabase}}\",\n  \"severity\": \"SEV1\"\n}"
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:8080"
+    },
+    {
+      "key": "ada",
+      "value": "ada",
+      "description": "username, sent as X-User-Id"
+    },
+    {
+      "key": "alice",
+      "value": "alice",
+      "description": "username, sent as X-User-Id"
+    },
+    {
+      "key": "bob",
+      "value": "bob",
+      "description": "username, sent as X-User-Id"
+    },
+    {
+      "key": "carol",
+      "value": "carol",
+      "description": "username, sent as X-User-Id"
+    },
+    {
+      "key": "dan",
+      "value": "dan",
+      "description": "username, sent as X-User-Id"
+    },
+    {
+      "key": "erin",
+      "value": "erin",
+      "description": "username, sent as X-User-Id"
+    },
+    {
+      "key": "adaId",
+      "value": "20000000-0000-0000-0000-000000000001"
+    },
+    {
+      "key": "aliceId",
+      "value": "20000000-0000-0000-0000-000000000002"
+    },
+    {
+      "key": "bobId",
+      "value": "20000000-0000-0000-0000-000000000003"
+    },
+    {
+      "key": "carolId",
+      "value": "20000000-0000-0000-0000-000000000004"
+    },
+    {
+      "key": "danId",
+      "value": "20000000-0000-0000-0000-000000000005"
+    },
+    {
+      "key": "erinId",
+      "value": "20000000-0000-0000-0000-000000000006"
+    },
+    {
+      "key": "unknownUser",
+      "value": "nobody"
+    },
+    {
+      "key": "teamPlatform",
+      "value": "10000000-0000-0000-0000-000000000001"
+    },
+    {
+      "key": "teamDatabase",
+      "value": "10000000-0000-0000-0000-000000000002"
+    },
+    {
+      "key": "teamNetwork",
+      "value": "10000000-0000-0000-0000-000000000003"
+    },
+    {
+      "key": "categoryPayments",
+      "value": "30000000-0000-0000-0000-000000000001"
+    },
+    {
+      "key": "categoryWebApplication",
+      "value": "30000000-0000-0000-0000-000000000002"
+    },
+    {
+      "key": "categoryDatabase",
+      "value": "30000000-0000-0000-0000-000000000003"
+    },
+    {
+      "key": "categoryVpn",
+      "value": "30000000-0000-0000-0000-000000000004"
+    },
+    {
+      "key": "categoryNetwork",
+      "value": "30000000-0000-0000-0000-000000000005"
+    },
+    {
+      "key": "incidentId",
+      "value": ""
+    }
+  ]
+}
