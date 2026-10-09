@@ -4,7 +4,7 @@ A monolith (Java 21, Spring Boot 3, PostgreSQL) where users report incidents, th
 them, incidents can be escalated or reassigned, the right people are emailed, and every action is audited.
 
 The single entry point is the REST controller
-[`IncidentManagementController`](src/main/java/org/example/controller/IncidentManagementController.java): every endpoint
+[`IncidentManagementController`](src/main/java/modules/controller/IncidentManagementController.java): every endpoint
 is one user action.
 Design: [docs/system-design.md](docs/system-design.md) · diagrams: [docs/c4-model.md](docs/c4-model.md) ·
 progress: [docs/development-plan.md](docs/development-plan.md).
