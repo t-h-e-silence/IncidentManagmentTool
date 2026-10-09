@@ -1,0 +1,998 @@
+{
+  "info": {
+    "name": "Incident Management - simple flows",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+    "description": "Two short happy-path flows, no error cases. Run each folder top to bottom in the Collection Runner (or newman). Start Docker (PostgreSQL + Mailpit) and the app with the seed profile (see README). Email checks call the Mailpit API at {{mailpitUrl}} and wait 12 s first.\n\n1. Reporter (bob): create, view, edit, comment, see it in my list, get an email, history.\n2. Resolver (dan, Database team): get the new-incident email, take it, comment, edit, escalate, review, resolve, close, history."
+  },
+  "item": [
+    {
+      "name": "1. Reporter flow (bob)",
+      "item": [
+        {
+          "name": "1. Create an incident",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-User-Id",
+                "value": "{{bob}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"title\": \"{{reporterTitle}}\",\n  \"description\": \"The printer on floor 3 does not respond\",\n  \"categoryId\": \"{{categoryDatabase}}\",\n  \"severity\": \"SEV3\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/incidents",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "incidents"
+              ]
+            },
+            "description": "Bob reports an incident in the Database category; the Database team (alice, dan) is emailed."
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set('reporterTitle', 'Printer offline ' + Date.now());"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 201', () => pm.response.to.have.status(201));",
+                  "const body = pm.response.json();",
+                  "pm.test('status is OPEN', () => pm.expect(body.status).to.eql('OPEN'));",
+                  "pm.collectionVariables.set('reporterIncidentId', body.id);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "2. View the incident",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-User-Id",
+                "value": "{{bob}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/incidents/{{reporterIncidentId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "incidents",
+                "{{reporterIncidentId}}"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 200', () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test('it is my incident', () => pm.expect(body.reporterId).to.eql(pm.collectionVariables.get('bobId')));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "3. Edit the title and description",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "X-User-Id",
+                "value": "{{bob}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"title\": \"{{reporterTitle}} (floor 3)\",\n  \"description\": \"The printer on floor 3 shows 'offline' since 9:00\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/incidents/{{reporterIncidentId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "incidents",
+                "{{reporterIncidentId}}"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 200', () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test('title changed', () => pm.expect(body.title).to.include('(floor 3)'));",
+                  "pm.test('description changed', () => pm.expect(body.description).to.include('since 9:00'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "4. Add a comment",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-User-Id",
+                "value": "{{bob}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"text\": \"I already restarted it, did not help\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/incidents/{{reporterIncidentId}}/comments",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "incidents",
+                "{{reporterIncidentId}}",
+                "comments"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 201', () => pm.response.to.have.status(201));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "5. The comment is on the incident",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-User-Id",
+                "value": "{{bob}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/incidents/{{reporterIncidentId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "incidents",
+                "{{reporterIncidentId}}"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 200', () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test('comment is there', () => pm.expect(JSON.stringify(body)).to.include('I already restarted it'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "6. My incidents include it",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-User-Id",
+                "value": "{{bob}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/users/{{bob}}/incidents",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "users",
+                "{{bob}}",
+                "incidents"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 200', () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test('listed', () => pm.expect(body.map(i => i.id)).to.include(pm.collectionVariables.get('reporterIncidentId')));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "7. (Dan) The Database team starts working on it",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "X-User-Id",
+                "value": "{{dan}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"status\": \"IN_PROGRESS\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/incidents/{{reporterIncidentId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "incidents",
+                "{{reporterIncidentId}}"
+              ]
+            },
+            "description": "Done as Dan so that Bob gets the 'being worked on' email."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 200', () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test('status is IN_PROGRESS', () => pm.expect(body.status).to.eql('IN_PROGRESS'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "8. Bob receives the 'being worked on' email",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{mailpitUrl}}/api/v1/search?query=to:bob@example.com {{reporterTitle}}",
+              "host": [
+                "{{mailpitUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "search"
+              ],
+              "query": [
+                {
+                  "key": "query",
+                  "value": "to:bob@example.com {{reporterTitle}}"
+                }
+              ]
+            },
+            "description": "Checks Bob's inbox in Mailpit (http://localhost:8025). Waits 12 s first: emails are sent by a job every 10 s."
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "setTimeout(() => {}, 12000); // the email job sends every 10 s"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 200', () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "const subjects = body.messages.map(m => m.Subject);",
+                  "pm.test('bob@example.com got \"Your incident is being worked on\"', () => pm.expect(subjects.some(s => s.includes('Your incident is being worked on') && s.includes(pm.collectionVariables.get('reporterTitle')))).to.be.true);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "9. History shows what happened",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-User-Id",
+                "value": "{{bob}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/incidents/{{reporterIncidentId}}/history",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "incidents",
+                "{{reporterIncidentId}}",
+                "history"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 200', () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test('has entries', () => pm.expect(body.length).to.be.above(2));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "2. Resolver flow (dan, Database team)",
+      "item": [
+        {
+          "name": "1. (Bob) Report an incident",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-User-Id",
+                "value": "{{bob}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"title\": \"{{resolverTitle}}\",\n  \"description\": \"Queries on db-01 take 5 s\",\n  \"categoryId\": \"{{categoryDatabase}}\",\n  \"severity\": \"SEV3\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/incidents",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "incidents"
+              ]
+            },
+            "description": "Setup, done as Bob: the Database category routes the incident to Dan's team."
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set('resolverTitle', 'Slow queries ' + Date.now());"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 201', () => pm.response.to.have.status(201));",
+                  "const body = pm.response.json();",
+                  "pm.collectionVariables.set('resolverIncidentId', body.id);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "2. Dan receives the 'new incident' email",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{mailpitUrl}}/api/v1/search?query=to:dan@example.com {{resolverTitle}}",
+              "host": [
+                "{{mailpitUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "search"
+              ],
+              "query": [
+                {
+                  "key": "query",
+                  "value": "to:dan@example.com {{resolverTitle}}"
+                }
+              ]
+            },
+            "description": "Checks Dan's inbox in Mailpit (http://localhost:8025). Waits 12 s first: emails are sent by a job every 10 s."
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "setTimeout(() => {}, 12000); // the email job sends every 10 s"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 200', () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "const subjects = body.messages.map(m => m.Subject);",
+                  "pm.test('dan@example.com got \"New incident\"', () => pm.expect(subjects.some(s => s.includes('New incident') && s.includes(pm.collectionVariables.get('resolverTitle')))).to.be.true);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "3. Team incidents include it",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-User-Id",
+                "value": "{{dan}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/teams/{{teamDatabase}}/incidents",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "teams",
+                "{{teamDatabase}}",
+                "incidents"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 200', () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test('listed', () => pm.expect(body.map(i => i.id)).to.include(pm.collectionVariables.get('resolverIncidentId')));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "4. View the incident",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-User-Id",
+                "value": "{{dan}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/incidents/{{resolverIncidentId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "incidents",
+                "{{resolverIncidentId}}"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 200', () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test('status is OPEN', () => pm.expect(body.status).to.eql('OPEN'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "5. Start working on it (-> IN_PROGRESS)",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "X-User-Id",
+                "value": "{{dan}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"status\": \"IN_PROGRESS\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/incidents/{{resolverIncidentId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "incidents",
+                "{{resolverIncidentId}}"
+              ]
+            },
+            "description": "Bob is emailed that his incident is being worked on."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 200', () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test('status is IN_PROGRESS', () => pm.expect(body.status).to.eql('IN_PROGRESS'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "6. Add a comment",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-User-Id",
+                "value": "{{dan}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"text\": \"Found a missing index, adding it\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/incidents/{{resolverIncidentId}}/comments",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "incidents",
+                "{{resolverIncidentId}}",
+                "comments"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 201', () => pm.response.to.have.status(201));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "7. Edit the description",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "X-User-Id",
+                "value": "{{dan}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"description\": \"Queries on db-01 take 5 s: missing index on orders.customer_id\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/incidents/{{resolverIncidentId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "incidents",
+                "{{resolverIncidentId}}"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 200', () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test('description changed', () => pm.expect(body.description).to.include('missing index'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "8. Escalate SEV3 -> SEV2",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "X-User-Id",
+                "value": "{{dan}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"severity\": \"SEV2\",\n  \"reason\": \"checkout is affected too\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/incidents/{{resolverIncidentId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "incidents",
+                "{{resolverIncidentId}}"
+              ]
+            },
+            "description": "The team and Bob are emailed about the escalation."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 200', () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test('severity is SEV2', () => pm.expect(body.severity).to.eql('SEV2'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "9. Submit for review (-> IN_REVIEW)",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "X-User-Id",
+                "value": "{{dan}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"status\": \"IN_REVIEW\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/incidents/{{resolverIncidentId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "incidents",
+                "{{resolverIncidentId}}"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 200', () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test('status is IN_REVIEW', () => pm.expect(body.status).to.eql('IN_REVIEW'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "10. Resolve (-> RESOLVED)",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "X-User-Id",
+                "value": "{{dan}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"status\": \"RESOLVED\",\n  \"reason\": \"index added, queries take 20 ms\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/incidents/{{resolverIncidentId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "incidents",
+                "{{resolverIncidentId}}"
+              ]
+            },
+            "description": "The team and Bob are emailed that it is resolved."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 200', () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test('status is RESOLVED', () => pm.expect(body.status).to.eql('RESOLVED'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "11. Bob receives the 'resolved' email",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{mailpitUrl}}/api/v1/search?query=to:bob@example.com {{resolverTitle}}",
+              "host": [
+                "{{mailpitUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "search"
+              ],
+              "query": [
+                {
+                  "key": "query",
+                  "value": "to:bob@example.com {{resolverTitle}}"
+                }
+              ]
+            },
+            "description": "Checks Bob's inbox in Mailpit (http://localhost:8025). Waits 12 s first: emails are sent by a job every 10 s."
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "setTimeout(() => {}, 12000); // the email job sends every 10 s"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 200', () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "const subjects = body.messages.map(m => m.Subject);",
+                  "pm.test('bob@example.com got \"Resolved\"', () => pm.expect(subjects.some(s => s.includes('Resolved') && s.includes(pm.collectionVariables.get('resolverTitle')))).to.be.true);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "12. Close (-> CLOSED)",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "X-User-Id",
+                "value": "{{dan}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"status\": \"CLOSED\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/incidents/{{resolverIncidentId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "incidents",
+                "{{resolverIncidentId}}"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 200', () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test('status is CLOSED', () => pm.expect(body.status).to.eql('CLOSED'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "13. History shows every step",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-User-Id",
+                "value": "{{dan}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/incidents/{{resolverIncidentId}}/history",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "incidents",
+                "{{resolverIncidentId}}",
+                "history"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 200', () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test('has entries', () => pm.expect(body.length).to.be.above(5));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:8080"
+    },
+    {
+      "key": "mailpitUrl",
+      "value": "http://localhost:8025"
+    },
+    {
+      "key": "bob",
+      "value": "bob",
+      "description": "username, sent as X-User-Id"
+    },
+    {
+      "key": "dan",
+      "value": "dan",
+      "description": "username, sent as X-User-Id"
+    },
+    {
+      "key": "bobId",
+      "value": "20000000-0000-0000-0000-000000000003"
+    },
+    {
+      "key": "teamDatabase",
+      "value": "10000000-0000-0000-0000-000000000002"
+    },
+    {
+      "key": "categoryDatabase",
+      "value": "30000000-0000-0000-0000-000000000003"
+    },
+    {
+      "key": "reporterTitle",
+      "value": ""
+    },
+    {
+      "key": "reporterIncidentId",
+      "value": ""
+    },
+    {
+      "key": "resolverTitle",
+      "value": ""
+    },
+    {
+      "key": "resolverIncidentId",
+      "value": ""
+    }
+  ]
+}
