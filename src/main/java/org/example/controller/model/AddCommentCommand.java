@@ -1,7 +1,9 @@
 package org.example.controller.model;
 
+import io.swagger.v3.oas.annotations.media.Schema;
+
 /**
  * Body of {@code POST /incidents/{id}/comments}.
  */
-public record AddCommentCommand(String text) {
+public record AddCommentCommand(@Schema(description = "Comment (≤ 5000)", example = "Also affects the mobile app") String text) {
 }

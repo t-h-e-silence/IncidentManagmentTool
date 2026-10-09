@@ -1,6 +1,12 @@
 server:
   port: ${PORT:8080}
 
+springdoc:
+  swagger-ui:
+    # Keeps the X-User-Id entered under "Authorize" across page reloads.
+    persist-authorization: true
+    operations-sorter: method
+
 logging:
   level:
     # DEBUG shows how each request's X-User-Id was resolved; actions and errors are logged at INFO / WARN.

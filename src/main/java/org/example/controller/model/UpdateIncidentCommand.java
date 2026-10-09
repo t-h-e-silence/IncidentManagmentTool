@@ -2,6 +2,8 @@ package org.example.controller.model;
 
 import java.util.UUID;
 
+import io.swagger.v3.oas.annotations.media.Schema;
+
 import org.example.common.model.Severity;
 import org.example.common.model.Text;
 import org.example.incidents.model.IncidentStatus;
@@ -18,8 +20,15 @@ import org.example.incidents.model.IncidentStatus;
  * @param status       next lifecycle step, e.g. {@code IN_REVIEW}, {@code RESOLVED}, {@code CLOSED}, {@code CANCELLED}
  * @param reason       required with {@code severity}, and to resolve, cancel or reopen; shown in emails and history
  */
-public record UpdateIncidentCommand(String title, String description, Severity severity, UUID targetTeamId,
-                                    IncidentStatus status, String reason) {
+public record UpdateIncidentCommand(
+        @Schema(description = "New name (≤ 200)", example = "Primary DB slow") String title,
+        @Schema(description = "New description (≤ 5000); blank clears it") String description,
+        @Schema(description = "Higher = escalation, lower = de-escalation; needs reason") Severity severity,
+        @Schema(description = "Only with an escalation: hand over to this active team",
+                example = "10000000-0000-0000-0000-000000000001") UUID targetTeamId,
+        @Schema(description = "Next lifecycle step") IncidentStatus status,
+        @Schema(description = "Required with severity, and to resolve, cancel or reopen (≤ 2000)",
+                example = "replica lag growing") String reason) {
 
     public static final int REASON_MAX_LENGTH = 2000;
 

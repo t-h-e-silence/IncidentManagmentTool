@@ -66,6 +66,15 @@ Errors are RFC 9457 problem details: `401` unknown/inactive user or missing head
   `OPEN | IN_PROGRESS | IN_REVIEW → CANCELLED`. Emails: acknowledged (`OPEN → IN_PROGRESS`) → reporter; resolved,
   reopened, cancelled → team and reporter.
 
+### Swagger / OpenAPI
+With the app running: **Swagger UI** at http://localhost:8080/swagger-ui.html (click **Authorize**, enter a username
+such as `dan`, then *Try it out*), the spec at http://localhost:8080/v3/api-docs (`.yaml` for YAML). Both are
+generated from the controller (springdoc); descriptions, examples and error responses are in
+`IncidentManagementController` and `OpenApiConfig`.
+
+A copy of the spec is in [`docs/openapi.yaml`](docs/openapi.yaml) (also importable into Postman). After changing an
+endpoint, refresh it from the running app: `curl -s localhost:8080/v3/api-docs.yaml > docs/openapi.yaml`.
+
 ### Postman
 - [`postman/IncidentManagement.postman_collection.json`](postman/IncidentManagement.postman_collection.json) — every
   endpoint and PATCH variant, with the seeded users, teams and categories as variables. Run **Create incident**
@@ -75,6 +84,12 @@ Errors are RFC 9457 problem details: `401` unknown/inactive user or missing head
   1. **Reporter (bob)** — create, list, view, rename, comment, history; what a reporter may not do.
   2. **Team member (dan, Database)** — acknowledge, escalate / de-escalate, review, resolve, reopen, close,
      hand-over to Platform, cancel, a combined PATCH.
+- [`postman/IncidentManagement-simple-flows.postman_collection.json`](postman/IncidentManagement-simple-flows.postman_collection.json)
+  — the same two roles as short happy paths with no error cases; email steps check Mailpit (`{{mailpitUrl}}`) after
+  waiting 12 s:
+  1. **Reporter (bob)** — create, view, edit, comment, my incidents, the "being worked on" email, history.
+  2. **Resolver (dan, Database)** — the "new incident" email, take it, comment, edit, escalate, review, resolve
+     (Bob gets the "resolved" email), close, history.
 
 ### Seeded users, teams and categories (`seed` profile)
 | User | Username | Id | Role |

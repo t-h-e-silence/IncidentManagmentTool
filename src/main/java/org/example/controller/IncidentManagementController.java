@@ -6,6 +6,11 @@ import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.Parameter;
+import io.swagger.v3.oas.annotations.media.Content;
+import io.swagger.v3.oas.annotations.media.ExampleObject;
+
 import org.example.audit.model.AuditAction;
 import org.example.audit.model.AuditEntityType;
 import org.example.audit.model.AuditEntryView;
@@ -97,6 +102,8 @@ public class IncidentManagementController {
      */
     @GetMapping("/teams")
     @Transactional(readOnly = true)
+    @Operation(tags = OpenApiConfig.TEAMS, summary = "List teams", description = "All teams by name, archived ones included, each with its "
+            + "active members and their team role.")
     public List<TeamView> listTeams(@ActingUser UUID actorId) {
         organization.getActiveActor(actorId);
         return organization.listTeams();
@@ -109,6 +116,7 @@ public class IncidentManagementController {
      */
     @GetMapping("/incidents")
     @Transactional(readOnly = true)
+    @Operation(tags = OpenApiConfig.INCIDENTS, summary = "List all incidents", description = "Every incident in any status, newest first.")
     public List<IncidentSummary> listAllIncidents(@ActingUser UUID actorId) {
         organization.getActiveActor(actorId);
         return incidents.listAll();
@@ -119,7 +127,12 @@ public class IncidentManagementController {
      */
     @GetMapping("/teams/{teamId}/incidents")
     @Transactional(readOnly = true)
-    public List<IncidentSummary> listTeamIncidents(@ActingUser UUID actorId, @PathVariable UUID teamId) {
+    @Operation(tags = OpenApiConfig.INCIDENTS, summary = "List a team's incidents", description = "Incidents the team owns now, in any status, "
+            + "newest first. 404 if the team does not exist.")
+    public List<IncidentSummary> listTeamIncidents(
+            @ActingUser UUID actorId,
+            @Parameter(description = "Team id", example = "10000000-0000-0000-0000-000000000002")
+            @PathVariable UUID teamId) {
         organization.getActiveActor(actorId);
         organization.getTeam(teamId);
         return incidents.listByTeam(teamId);
@@ -132,7 +145,10 @@ public class IncidentManagementController {
      */
     @GetMapping("/users/{user}/incidents")
     @Transactional(readOnly = true)
-    public List<IncidentSummary> listUserIncidents(@ActingUser UUID actorId, @PathVariable String user) {
+    @Operation(tags = OpenApiConfig.INCIDENTS, summary = "List incidents reported by a user", description = "Newest first. 404 if no such user.")
+    public List<IncidentSummary> listUserIncidents(
+            @ActingUser UUID actorId,
+            @Parameter(description = "Username or user id", example = "bob") @PathVariable String user) {
         organization.getActiveActor(actorId);
         UUID userId = organization.findUserId(user)
                 .orElseThrow(() -> new NotFoundException("User " + user + " not found"));
@@ -146,6 +162,12 @@ public class IncidentManagementController {
      */
     @PostMapping("/incidents")
     @ResponseStatus(HttpStatus.CREATED)
+    @Operation(tags = OpenApiConfig.INCIDENTS, summary = "Create an incident", description = """
+            Any active user. The category decides the owning team, whose members are emailed. The new incident is             `OPEN`. A reporter may set at most `SEV2` (409 otherwise); `title` (≤ 200), `categoryId` and             `severity` are required, `description` (≤ 5000) is optional.""")
+    @io.swagger.v3.oas.annotations.parameters.RequestBody(content = @Content(examples = @ExampleObject(
+            name = "Database incident", value = """
+            {"title": "Checkout is slow", "description": "Pages take 10 s to load",
+             "categoryId": "30000000-0000-0000-0000-000000000003", "severity": "SEV2"}""")))
     public IncidentView createIncident(@ActingUser UUID actorId, @RequestBody ReportIncidentCommand command) {
         Actor actor = organization.getActiveActor(actorId);
         String correlationId = newCorrelationId();
@@ -179,6 +201,28 @@ public class IncidentManagementController {
      * </ol>
      */
     @PatchMapping("/incidents/{incidentId}")
+    @Operation(tags = OpenApiConfig.INCIDENTS, summary = "Update an incident: name, description, severity, status", description = """
+            Fields left out stay unchanged; at least one change is needed. Applied in this order, all or nothing:
+
+            1. **title / description** — owning team or reporter; no emails.
+            2. **severity** + **reason** — owning team. Higher = **escalation**, optionally handing the incident over             to `targetTeamId` (it becomes `OPEN` for that team); lower = **de-escalation**, same team             (`targetTeamId` → 409). Both are recorded and emailed to the owning team, the previous team (on             hand-over) and the reporter.
+            3. **status** — owning team: `OPEN → IN_PROGRESS → IN_REVIEW → RESOLVED → CLOSED`,             `IN_REVIEW → IN_PROGRESS`, `RESOLVED → IN_PROGRESS` (reopen), `OPEN | IN_PROGRESS | IN_REVIEW →             CANCELLED`. **reason** is required to resolve, cancel or reopen. Emails: acknowledged → reporter;             resolved, reopened, cancelled → team and reporter.""")
+    @io.swagger.v3.oas.annotations.parameters.RequestBody(content = @Content(examples = {
+            @ExampleObject(name = "Rename", value = "{\"title\": \"Primary DB slow\"}"),
+            @ExampleObject(name = "Describe", value = "{\"description\": \"Timeouts on checkout and login\"}"),
+            @ExampleObject(name = "Acknowledge", value = "{\"status\": \"IN_PROGRESS\"}"),
+            @ExampleObject(name = "Escalate", value = "{\"severity\": \"SEV1\", \"reason\": \"replica lag growing\"}"),
+            @ExampleObject(name = "Escalate and hand over", value = """
+                    {"severity": "SEV1", "targetTeamId": "10000000-0000-0000-0000-000000000001",
+                     "reason": "connection pool of the payments service"}"""),
+            @ExampleObject(name = "De-escalate", value = "{\"severity\": \"SEV3\", \"reason\": \"contained\"}"),
+            @ExampleObject(name = "Submit for review", value = "{\"status\": \"IN_REVIEW\"}"),
+            @ExampleObject(name = "Resolve", value = "{\"status\": \"RESOLVED\", \"reason\": \"index rebuilt\"}"),
+            @ExampleObject(name = "Close", value = "{\"status\": \"CLOSED\"}"),
+            @ExampleObject(name = "Cancel", value = "{\"status\": \"CANCELLED\", \"reason\": \"duplicate\"}"),
+            @ExampleObject(name = "Several at once", value = """
+                    {"title": "Primary DB rejects writes", "severity": "SEV1", "status": "IN_PROGRESS",
+                     "reason": "disk full"}""")}))
     public IncidentView updateIncident(@ActingUser UUID actorId, @PathVariable UUID incidentId,
                                        @RequestBody UpdateIncidentCommand command) {
         Actor actor = organization.getActiveActor(actorId);
@@ -200,6 +244,7 @@ public class IncidentManagementController {
 
     @GetMapping("/incidents/{incidentId}")
     @Transactional(readOnly = true)
+    @Operation(tags = OpenApiConfig.INCIDENTS, summary = "View an incident", description = "With its comments, oldest first.")
     public IncidentView getIncident(@ActingUser UUID actorId, @PathVariable UUID incidentId) {
         organization.getActiveActor(actorId);
         return incidents.get(incidentId);
@@ -210,6 +255,8 @@ public class IncidentManagementController {
      */
     @PostMapping("/incidents/{incidentId}/comments")
     @ResponseStatus(HttpStatus.CREATED)
+    @Operation(tags = OpenApiConfig.INCIDENTS, summary = "Comment on an incident", description = "Owning team or reporter, while the incident is "
+            + "`OPEN`, `IN_PROGRESS` or `IN_REVIEW`. `text` ≤ 5000.")
     public CommentView addComment(@ActingUser UUID actorId, @PathVariable UUID incidentId,
                                   @RequestBody AddCommentCommand command) {
         Actor actor = organization.getActiveActor(actorId);
@@ -225,6 +272,8 @@ public class IncidentManagementController {
      */
     @GetMapping("/incidents/{incidentId}/history")
     @Transactional(readOnly = true)
+    @Operation(tags = OpenApiConfig.INCIDENTS, summary = "Audit history of an incident", description = """
+            Oldest first: who did what and when, with details (from/to status, severity and team, reasons).             Changes made by one request share a `correlationId`.""")
     public List<AuditEntryView> getIncidentHistory(@ActingUser UUID actorId, @PathVariable UUID incidentId) {
         organization.getActiveActor(actorId);
         incidents.get(incidentId);

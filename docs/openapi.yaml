@@ -1,0 +1,750 @@
+openapi: 3.1.0
+info:
+  title: Incident Management API
+  description: |-
+    Report incidents, list them, and work them: rename, describe, escalate or de-escalate (severity, with emails), and move them through the lifecycle.
+
+    **Caller:** every request names the acting user in the `X-User-Id` header, as a username (`ada`, `alice`, `bob`, `carol`, `dan`, `erin` with the `seed` profile) or a user id. Click **Authorize** and enter e.g. `dan`. There is no login.
+
+    **Seeded ids:** teams Platform `10000000-0000-0000-0000-000000000001`, Database `…0002`, Network `…0003`; categories Payments `30000000-0000-0000-0000-000000000001`, Web application `…0002`, Database `…0003`, VPN `…0004`, Network `…0005`.
+
+    **Errors** are RFC 9457 problem details (`application/problem+json`).
+  version: "1"
+servers:
+- url: /
+  description: This application
+- url: http://localhost:8080
+  description: "Local, default port"
+security:
+- caller: []
+tags:
+- name: Teams
+  description: Teams and their members
+- name: Incidents
+  description: "List, create, update (name, description, severity, status), comment,\
+    \ history"
+paths:
+  /incidents:
+    get:
+      tags:
+      - Incidents
+      summary: List all incidents
+      description: "Every incident in any status, newest first."
+      operationId: listAllIncidents
+      responses:
+        "200":
+          description: OK
+          content:
+            '*/*':
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/IncidentSummary"
+        "401":
+          description: "Header missing, or the user is unknown, deactivated or the\
+            \ system user"
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+    post:
+      tags:
+      - Incidents
+      summary: Create an incident
+      description: "Any active user. The category decides the owning team, whose members\
+        \ are emailed. The new incident is             `OPEN`. A reporter may set\
+        \ at most `SEV2` (409 otherwise); `title` (≤ 200), `categoryId` and      \
+        \       `severity` are required, `description` (≤ 5000) is optional."
+      operationId: createIncident
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ReportIncidentCommand"
+            examples:
+              Database incident:
+                description: Database incident
+                value:
+                  title: Checkout is slow
+                  description: Pages take 10 s to load
+                  categoryId: 30000000-0000-0000-0000-000000000003
+                  severity: SEV2
+        required: true
+      responses:
+        "201":
+          description: Created
+          content:
+            '*/*':
+              schema:
+                $ref: "#/components/schemas/IncidentView"
+        "400":
+          description: "Invalid input, e.g. missing reason, empty update, malformed\
+            \ id or JSON"
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        "401":
+          description: "Header missing, or the user is unknown, deactivated or the\
+            \ system user"
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        "404":
+          description: "Incident, team, user or category not found"
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        "409":
+          description: "Business rule violated, e.g. illegal status change, severity\
+            \ not raised, incident closed"
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+  /incidents/{incidentId}/comments:
+    post:
+      tags:
+      - Incidents
+      summary: Comment on an incident
+      description: "Owning team or reporter, while the incident is `OPEN`, `IN_PROGRESS`\
+        \ or `IN_REVIEW`. `text` ≤ 5000."
+      operationId: addComment
+      parameters:
+      - name: incidentId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AddCommentCommand"
+        required: true
+      responses:
+        "201":
+          description: Created
+          content:
+            '*/*':
+              schema:
+                $ref: "#/components/schemas/CommentView"
+        "400":
+          description: "Invalid input, e.g. missing reason, empty update, malformed\
+            \ id or JSON"
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        "401":
+          description: "Header missing, or the user is unknown, deactivated or the\
+            \ system user"
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        "403":
+          description: "Not allowed, e.g. not a member of the owning team"
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        "404":
+          description: "Incident, team, user or category not found"
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        "409":
+          description: "Business rule violated, e.g. illegal status change, severity\
+            \ not raised, incident closed"
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+  /incidents/{incidentId}:
+    get:
+      tags:
+      - Incidents
+      summary: View an incident
+      description: "With its comments, oldest first."
+      operationId: getIncident
+      parameters:
+      - name: incidentId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        "200":
+          description: OK
+          content:
+            '*/*':
+              schema:
+                $ref: "#/components/schemas/IncidentView"
+        "400":
+          description: "Invalid input, e.g. missing reason, empty update, malformed\
+            \ id or JSON"
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        "401":
+          description: "Header missing, or the user is unknown, deactivated or the\
+            \ system user"
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        "404":
+          description: "Incident, team, user or category not found"
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+    patch:
+      tags:
+      - Incidents
+      summary: "Update an incident: name, description, severity, status"
+      description: |-
+        Fields left out stay unchanged; at least one change is needed. Applied in this order, all or nothing:
+
+        1. **title / description** — owning team or reporter; no emails.
+        2. **severity** + **reason** — owning team. Higher = **escalation**, optionally handing the incident over             to `targetTeamId` (it becomes `OPEN` for that team); lower = **de-escalation**, same team             (`targetTeamId` → 409). Both are recorded and emailed to the owning team, the previous team (on             hand-over) and the reporter.
+        3. **status** — owning team: `OPEN → IN_PROGRESS → IN_REVIEW → RESOLVED → CLOSED`,             `IN_REVIEW → IN_PROGRESS`, `RESOLVED → IN_PROGRESS` (reopen), `OPEN | IN_PROGRESS | IN_REVIEW →             CANCELLED`. **reason** is required to resolve, cancel or reopen. Emails: acknowledged → reporter;             resolved, reopened, cancelled → team and reporter.
+      operationId: updateIncident
+      parameters:
+      - name: incidentId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateIncidentCommand"
+            examples:
+              Rename:
+                description: Rename
+                value:
+                  title: Primary DB slow
+              Describe:
+                description: Describe
+                value:
+                  description: Timeouts on checkout and login
+              Acknowledge:
+                description: Acknowledge
+                value:
+                  status: IN_PROGRESS
+              Escalate:
+                description: Escalate
+                value:
+                  severity: SEV1
+                  reason: replica lag growing
+              Escalate and hand over:
+                description: Escalate and hand over
+                value:
+                  severity: SEV1
+                  targetTeamId: 10000000-0000-0000-0000-000000000001
+                  reason: connection pool of the payments service
+              De-escalate:
+                description: De-escalate
+                value:
+                  severity: SEV3
+                  reason: contained
+              Submit for review:
+                description: Submit for review
+                value:
+                  status: IN_REVIEW
+              Resolve:
+                description: Resolve
+                value:
+                  status: RESOLVED
+                  reason: index rebuilt
+              Close:
+                description: Close
+                value:
+                  status: CLOSED
+              Cancel:
+                description: Cancel
+                value:
+                  status: CANCELLED
+                  reason: duplicate
+              Several at once:
+                description: Several at once
+                value:
+                  title: Primary DB rejects writes
+                  severity: SEV1
+                  status: IN_PROGRESS
+                  reason: disk full
+        required: true
+      responses:
+        "200":
+          description: OK
+          content:
+            '*/*':
+              schema:
+                $ref: "#/components/schemas/IncidentView"
+        "400":
+          description: "Invalid input, e.g. missing reason, empty update, malformed\
+            \ id or JSON"
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        "401":
+          description: "Header missing, or the user is unknown, deactivated or the\
+            \ system user"
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        "403":
+          description: "Not allowed, e.g. not a member of the owning team"
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        "404":
+          description: "Incident, team, user or category not found"
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        "409":
+          description: "Business rule violated, e.g. illegal status change, severity\
+            \ not raised, incident closed"
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+  /users/{user}/incidents:
+    get:
+      tags:
+      - Incidents
+      summary: List incidents reported by a user
+      description: Newest first. 404 if no such user.
+      operationId: listUserIncidents
+      parameters:
+      - name: user
+        in: path
+        description: Username or user id
+        required: true
+        schema:
+          type: string
+        example: bob
+      responses:
+        "200":
+          description: OK
+          content:
+            '*/*':
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/IncidentSummary"
+        "401":
+          description: "Header missing, or the user is unknown, deactivated or the\
+            \ system user"
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        "404":
+          description: "Incident, team, user or category not found"
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+  /teams:
+    get:
+      tags:
+      - Teams
+      summary: List teams
+      description: "All teams by name, archived ones included, each with its active\
+        \ members and their team role."
+      operationId: listTeams
+      responses:
+        "200":
+          description: OK
+          content:
+            '*/*':
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/TeamView"
+        "401":
+          description: "Header missing, or the user is unknown, deactivated or the\
+            \ system user"
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+  /teams/{teamId}/incidents:
+    get:
+      tags:
+      - Incidents
+      summary: List a team's incidents
+      description: "Incidents the team owns now, in any status, newest first. 404\
+        \ if the team does not exist."
+      operationId: listTeamIncidents
+      parameters:
+      - name: teamId
+        in: path
+        description: Team id
+        required: true
+        schema:
+          type: string
+          format: uuid
+        example: 10000000-0000-0000-0000-000000000002
+      responses:
+        "200":
+          description: OK
+          content:
+            '*/*':
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/IncidentSummary"
+        "400":
+          description: "Invalid input, e.g. missing reason, empty update, malformed\
+            \ id or JSON"
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        "401":
+          description: "Header missing, or the user is unknown, deactivated or the\
+            \ system user"
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        "404":
+          description: "Incident, team, user or category not found"
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+  /incidents/{incidentId}/history:
+    get:
+      tags:
+      - Incidents
+      summary: Audit history of an incident
+      description: "Oldest first: who did what and when, with details (from/to status,\
+        \ severity and team, reasons).             Changes made by one request share\
+        \ a `correlationId`."
+      operationId: getIncidentHistory
+      parameters:
+      - name: incidentId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        "200":
+          description: OK
+          content:
+            '*/*':
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/AuditEntryView"
+        "400":
+          description: "Invalid input, e.g. missing reason, empty update, malformed\
+            \ id or JSON"
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        "401":
+          description: "Header missing, or the user is unknown, deactivated or the\
+            \ system user"
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        "404":
+          description: "Incident, team, user or category not found"
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+components:
+  schemas:
+    ReportIncidentCommand:
+      type: object
+      properties:
+        title:
+          type: string
+        description:
+          type: string
+        categoryId:
+          type: string
+          format: uuid
+        severity:
+          type: string
+          enum:
+          - SEV1
+          - SEV2
+          - SEV3
+          - SEV4
+    CommentView:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        incidentId:
+          type: string
+          format: uuid
+        authorId:
+          type: string
+          format: uuid
+        text:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+    IncidentView:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        title:
+          type: string
+        description:
+          type: string
+        categoryId:
+          type: string
+          format: uuid
+        categoryName:
+          type: string
+        teamId:
+          type: string
+          format: uuid
+        reporterId:
+          type: string
+          format: uuid
+        severity:
+          type: string
+          enum:
+          - SEV1
+          - SEV2
+          - SEV3
+          - SEV4
+        status:
+          type: string
+          enum:
+          - OPEN
+          - IN_PROGRESS
+          - IN_REVIEW
+          - RESOLVED
+          - CLOSED
+          - CANCELLED
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+        acknowledgedAt:
+          type: string
+          format: date-time
+        resolvedAt:
+          type: string
+          format: date-time
+        resolvedBy:
+          type: string
+          format: uuid
+        resolutionNote:
+          type: string
+        closedAt:
+          type: string
+          format: date-time
+        comments:
+          type: array
+          items:
+            $ref: "#/components/schemas/CommentView"
+    AddCommentCommand:
+      type: object
+      properties:
+        text:
+          type: string
+          description: Comment (≤ 5000)
+          example: Also affects the mobile app
+    UpdateIncidentCommand:
+      type: object
+      properties:
+        title:
+          type: string
+          description: New name (≤ 200)
+          example: Primary DB slow
+        description:
+          type: string
+          description: New description (≤ 5000); blank clears it
+        severity:
+          type: string
+          description: "Higher = escalation, lower = de-escalation; needs reason"
+          enum:
+          - SEV1
+          - SEV2
+          - SEV3
+          - SEV4
+        targetTeamId:
+          type: string
+          format: uuid
+          description: "Only with an escalation: hand over to this active team"
+          example: 10000000-0000-0000-0000-000000000001
+        status:
+          type: string
+          description: Next lifecycle step
+          enum:
+          - OPEN
+          - IN_PROGRESS
+          - IN_REVIEW
+          - RESOLVED
+          - CLOSED
+          - CANCELLED
+        reason:
+          type: string
+          description: "Required with severity, and to resolve, cancel or reopen (≤\
+            \ 2000)"
+          example: replica lag growing
+    IncidentSummary:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        title:
+          type: string
+        teamId:
+          type: string
+          format: uuid
+        reporterId:
+          type: string
+          format: uuid
+        severity:
+          type: string
+          enum:
+          - SEV1
+          - SEV2
+          - SEV3
+          - SEV4
+        status:
+          type: string
+          enum:
+          - OPEN
+          - IN_PROGRESS
+          - IN_REVIEW
+          - RESOLVED
+          - CLOSED
+          - CANCELLED
+        createdAt:
+          type: string
+          format: date-time
+    TeamMemberView:
+      type: object
+      properties:
+        userId:
+          type: string
+          format: uuid
+        name:
+          type: string
+        email:
+          type: string
+        role:
+          type: string
+          enum:
+          - RESPONDER
+          - TEAM_LEAD
+    TeamView:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        archived:
+          type: boolean
+        members:
+          type: array
+          items:
+            $ref: "#/components/schemas/TeamMemberView"
+    AuditEntryView:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        actorId:
+          type: string
+          format: uuid
+        action:
+          type: string
+          enum:
+          - INCIDENT_CREATED
+          - COMMENT_ADDED
+          - STATUS_CHANGED
+          - DETAILS_UPDATED
+          - SEVERITY_CHANGED
+          - REASSIGNED
+          - ESCALATED
+          - DE_ESCALATED
+          - NOTIFICATION_REPLAYED
+        entityType:
+          type: string
+          enum:
+          - INCIDENT
+          - COMMENT
+          - NOTIFICATION
+        entityId:
+          type: string
+          format: uuid
+        incidentId:
+          type: string
+          format: uuid
+        details:
+          type: object
+          additionalProperties:
+            type: string
+        correlationId:
+          type: string
+        occurredAt:
+          type: string
+          format: date-time
+    Problem:
+      type: object
+      description: RFC 9457 problem detail
+      properties:
+        type:
+          type: string
+          example: about:blank
+        title:
+          type: string
+          example: Conflict
+        status:
+          type: integer
+          format: int32
+          example: 409
+        detail:
+          type: string
+          example: Incident … cannot go from CLOSED to IN_PROGRESS
+        instance:
+          type: string
+          example: /incidents/…
+  securitySchemes:
+    caller:
+      type: apiKey
+      description: Username (e.g. `bob`) or user id of the acting user
+      name: X-User-Id
+      in: header
