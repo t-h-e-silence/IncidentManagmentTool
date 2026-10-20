@@ -1,4 +1,4 @@
-package modules.controller;
+package modules.organization.service;
 
 import java.lang.annotation.ElementType;
 import java.lang.annotation.Retention;

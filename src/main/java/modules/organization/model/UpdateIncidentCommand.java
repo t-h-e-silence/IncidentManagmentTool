@@ -1,4 +1,4 @@
-package modules.controller.model;
+package modules.organization.model;
 
 import java.util.UUID;
 

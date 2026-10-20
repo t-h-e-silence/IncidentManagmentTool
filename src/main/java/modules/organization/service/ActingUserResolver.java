@@ -1,4 +1,4 @@
-package modules.controller;
+package modules.organization.service;
 
 import java.util.List;
 import java.util.UUID;
@@ -6,7 +6,6 @@ import java.util.UUID;
 import jakarta.servlet.http.HttpServletRequest;
 
 import modules.common.exception.UnauthenticatedException;
-import modules.organization.service.OrganizationService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.core.MethodParameter;

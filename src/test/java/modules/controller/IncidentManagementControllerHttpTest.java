@@ -19,6 +19,7 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 
+import modules.IncidentManagementController;
 import modules.audit.service.AuditService;
 import modules.common.exception.ForbiddenException;
 import modules.common.exception.UnauthenticatedException;
@@ -32,6 +33,7 @@ import modules.incidents.service.IncidentService;
 import modules.notifications.service.NotificationService;
 import modules.organization.model.CategoryRouting;
 import modules.organization.model.TeamView;
+import modules.organization.service.ActingUser;
 import modules.organization.service.OrganizationService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;

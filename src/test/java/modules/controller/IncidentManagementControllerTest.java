@@ -18,6 +18,7 @@ import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
+import modules.IncidentManagementController;
 import modules.audit.model.AuditAction;
 import modules.audit.model.AuditRecord;
 import modules.audit.service.AuditService;
@@ -27,8 +28,8 @@ import modules.common.exception.NotFoundException;
 import modules.common.exception.UnauthenticatedException;
 import modules.common.model.Recipient;
 import modules.common.model.Severity;
-import modules.controller.model.AddCommentCommand;
-import modules.controller.model.UpdateIncidentCommand;
+import modules.organization.model.AddCommentCommand;
+import modules.organization.model.UpdateIncidentCommand;
 import modules.escalations.model.EscalationRecipients;
 import modules.escalations.model.EscalationRecord;
 import modules.escalations.service.EscalationService;

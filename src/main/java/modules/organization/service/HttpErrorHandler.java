@@ -1,4 +1,4 @@
-package modules.controller;
+package modules.organization.service;
 
 import jakarta.servlet.http.HttpServletRequest;
 

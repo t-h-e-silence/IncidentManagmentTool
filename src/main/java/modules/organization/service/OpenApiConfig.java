@@ -1,4 +1,4 @@
-package modules.controller;
+package modules.organization.service;
 
 import java.util.List;
 import java.util.Map;
@@ -31,8 +31,8 @@ import org.springframework.context.annotation.Configuration;
 @Configuration
 public class OpenApiConfig {
 
-    static final String TEAMS = "Teams";
-    static final String INCIDENTS = "Incidents";
+    public static final String TEAMS = "Teams";
+    public static final String INCIDENTS = "Incidents";
 
     private static final String CALLER = "caller";
     private static final String PROBLEM = "Problem";
