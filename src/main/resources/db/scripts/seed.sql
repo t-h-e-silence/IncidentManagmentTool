@@ -1,4 +1,4 @@
--- Demo/test data, loaded only with the `seed` profile. Fixed ids, so they can be used as actor ids.
+-- Demo/test data, loaded by seed.sh (not a Flyway migration). Fixed ids, so they can be used as actor ids.
 --   users      20000000-...-00N    teams      10000000-...-00N    categories 30000000-...-00N
 -- Users also have a username (ada, alice, bob, carol, dan, erin), accepted by the HTTP API instead of the id.
 -- Re-runnable: existing rows are left unchanged.

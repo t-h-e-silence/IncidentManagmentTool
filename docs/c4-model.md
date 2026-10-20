@@ -65,7 +65,7 @@ C4Container
 
     System_Boundary(ims, "Incident Management System") {
         Container(app, "Incident Management application", "Java 21, Spring Boot 3", "Monolith: organization, incidents, audit, notifications, escalations behind IncidentManagementController. Scheduled email delivery job.")
-        ContainerDb(db, "Database", "PostgreSQL 17", "One schema per module: organization, incidents, audit, notifications, escalations. Flyway migrations; demo data with the seed profile.")
+        ContainerDb(db, "Database", "PostgreSQL 17", "One schema per module: organization, incidents, audit, notifications, escalations. Flyway migrations; demo data loaded by seed.sh.")
     }
 
     System_Ext(smtp, "Email server", "SMTP relay")

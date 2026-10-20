@@ -95,7 +95,7 @@ Hibernate only validates.
 
 | Schema | Tables | Notes |
 |---|---|---|
-| `organization` | `app_user`, `team`, `team_membership(team_id, user_id, role)`, `category` | SYSTEM user created by `V101`; demo data by the `seed` profile (`db/seed/R__seed_organization.sql`) |
+| `organization` | `app_user`, `team`, `team_membership(team_id, user_id, role)`, `category` | SYSTEM user created by `V101`; demo data by `db/scripts/seed.sh` (`db/scripts/seed.sql`, not a migration) |
 | `incidents` | `incident`, `comment` | `incident` keeps a category-name snapshot, `team_id`, `reporter_id`, `severity`, `status`, timestamps, `resolved_by`, `resolution_note`, `version` |
 | `audit` | `audit_entry` | `details` is jsonb (ids and values, no personal data); trigger `audit_entry_append_only` |
 | `notifications` | `notification` | recipient email copied at creation; `status`, `attempts`, `next_attempt_at`, `last_error`; partial index on due rows |

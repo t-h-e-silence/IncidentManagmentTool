@@ -33,9 +33,11 @@ mvn clean verify        # unit tests (JUnit 5 + Mockito)
 
 ## Run with demo data
 ```bash
-docker compose up -d                                   # PostgreSQL on 5432, Mailpit on 1025 / http://localhost:8025
-mvn spring-boot:run -Dspring-boot.run.profiles=seed    # migrations + seed data, email job, HTTP on :8080
+docker compose up -d                       # PostgreSQL on 5432, Mailpit on 1025 / http://localhost:8025
+mvn spring-boot:run                        # migrations, email job, HTTP on :8080
+./src/main/resources/db/scripts/seed.sh   # demo users, teams, categories (once the tables exist; re-runnable)
 ```
+`src/main/resources/db/scripts/db.sh` shows the data (`db.sh tables`, `db.sh incidents.incident`, `db.sh "select ..."`).
 Configuration (environment variables): `PORT` (default 8080), `DB_URL`, `DB_USER`, `DB_PASSWORD`, `SMTP_HOST`,
 `SMTP_PORT`, `SMTP_USER`, `SMTP_PASSWORD`, `MAIL_FROM`.
 
@@ -91,7 +93,7 @@ endpoint, refresh it from the running app: `curl -s localhost:8080/v3/api-docs.y
   2. **Resolver (dan, Database)** — the "new incident" email, take it, comment, edit, escalate, review, resolve
      (Bob gets the "resolved" email), close, history.
 
-### Seeded users, teams and categories (`seed` profile)
+### Seeded users, teams and categories (`seed.sh`)
 | User | Username | Id | Role |
 |---|---|---|---|
 | Ada Admin | `ada` | `20000000-0000-0000-0000-000000000001` | ADMIN |

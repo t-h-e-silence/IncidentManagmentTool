@@ -55,7 +55,7 @@ public class ActingUserResolver implements HandlerMethodArgumentResolver, WebMvc
         }
         UUID userId = organization.findUserId(user).orElseThrow(() -> {
             log.warn("{} {}: no user with username '{}'. Demo users (ada, alice, bob, carol, dan, erin) exist only "
-                    + "when the app was started with the 'seed' profile", method(request), path(request), user);
+                    + "after src/main/resources/db/scripts/seed.sh was run", method(request), path(request), user);
             return new UnauthenticatedException("Unknown user " + user);
         });
         log.debug("{} {}: {} '{}' is user {}", method(request), path(request),

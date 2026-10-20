@@ -54,18 +54,3 @@ notifications:
     # How often the email job sends due notifications.
     interval: 10s
     batch-size: 50
-
----
-# Demo/test data (users, teams, categories with fixed ids): run with --spring.profiles.active=seed
-spring:
-  config:
-    activate:
-      on-profile: seed
-  flyway:
-    locations:
-      - classpath:db/migration/organization
-      - classpath:db/migration/incidents
-      - classpath:db/migration/audit
-      - classpath:db/migration/notifications
-      - classpath:db/migration/escalations
-      - classpath:db/seed

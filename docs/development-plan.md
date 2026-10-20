@@ -11,8 +11,8 @@ Tick a box only when `mvn clean verify` is green; commit after every step.
   notifications, choosing the email content by escalation type and receiver).
 - A single entry point, **`IncidentManagementController`** (plain Java class), imports the service interfaces and
   orchestrates every user action.
-- **PostgreSQL + JPA + Flyway**, one schema per module. **Seed data** for running and trying the application comes from a
-  Flyway `seed` profile.
+- **PostgreSQL + JPA + Flyway**, one schema per module. **Seed data** for running and trying the application is loaded by a
+  shell script (`db/scripts/seed.sh`).
 - **Consistency:** every Controller action is **one transaction** (incident change + audit entry + notification rows +
   escalation record commit together or not at all). Emails are sent **after commit** by a scheduled job in
   `notifications` (retries, dead letters), so SMTP problems never fail or corrupt a user action.
@@ -159,16 +159,16 @@ one `correlationId` per request. Private helpers: `audit(...)`, `teamRecipients(
 - Escalation emails: owning team first, then previous team, then reporter — each person gets one email, the escalator none.
 - SQL and JPA mappings were checked once against PostgreSQL 17 with the `seed` profile (report → emails → acknowledge → comment → severity → reassign/escalate with hand-over → resolve → timeline), outside the repo; there are no integration tests in the project, as agreed.
 
-## 5. Seed data (profile `seed`)
-- Location `classpath:db/seed`, added to `spring.flyway.locations` only in the `seed` profile.
-- Repeatable scripts (`R__seed_<module>.sql`) with fixed ids and `ON CONFLICT DO NOTHING`, so they run after all migrations and can be re-run safely.
+## 5. Seed data (`seed.sh`)
+- `src/main/resources/db/scripts/seed.sql`, loaded by `seed.sh` into the running Postgres container; not a Flyway migration and not part of app startup.
+- Fixed ids and `ON CONFLICT DO NOTHING`, so it runs after the migrations (start the app once first) and can be re-run safely.
 - Content: ADMIN Ada; SYSTEM user; Alice (lead Database, responder Network), Bob (no team, reporter), Carol (lead Platform), Dan (Database), Erin (lead Network); teams Platform, Database, Network; categories Payments, Web application → Platform, Database → Database, VPN, Network → Network.
 
 ## 6. Testing (unit tests, JUnit 5 + Mockito)
 - **Entities / domain rules:** lifecycle transitions, severity ≤ SEV2 on report, escalation must raise severity, team ≥ 1 member.
 - **ServiceImpls** with mocked repositories: e.g. `IncidentServiceImpl.acknowledge` by a non-member → `ForbiddenException`; `EscalationServiceImpl.recordAndNotify` sends the right subject/body to new team, previous team and reporter (captured with `ArgumentCaptor`); `NotificationServiceImpl.deliverDue` retries then dead-letters.
 - **Controller** with mocked services: order of calls (`InOrder`), nothing audited/notified when the incident service throws, admin functions reject non-admins.
-- **Manual run:** `docker compose up -d`, `mvn spring-boot:run -Dspring-boot.run.profiles=seed`, emails visible in Mailpit (`localhost:8025`).
+- **Manual run:** `docker compose up -d`, `mvn spring-boot:run`, `seed.sh`, emails visible in Mailpit (`localhost:8025`).
 
 ## 7. Later (not in this plan)
 **Automatic escalation by team policy** (severity threshold → hand-over by SYSTEM) · UI over the HTTP API · integration tests · metrics · OIDC login · monitoring-system (SYSTEM) events · Slack/SMS · admin functions for teams/categories/policies · `TEAM_LEAD`-only actions · user anonymization · confidential incidents.
