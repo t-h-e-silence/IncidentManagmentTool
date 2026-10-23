@@ -2,7 +2,7 @@
   "info": {
     "name": "Incident Management - simple flows",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
-    "description": "Two short happy-path flows, no error cases. Run each folder top to bottom in the Collection Runner (or newman). Start Docker (PostgreSQL + Mailpit) and the app with the seed profile (see README). Email checks call the Mailpit API at {{mailpitUrl}} and wait 12 s first.\n\n1. Reporter (bob): create, view, edit, comment, see it in my list, get an email, history.\n2. Resolver (dan, Database team): get the new-incident email, take it, comment, edit, escalate, review, resolve, close, history."
+    "description": "Two short happy-path flows, no error cases. Run each folder top to bottom in the Collection Runner (or newman). Start Docker (PostgreSQL + Mailpit) and the app, then load the demo data with seed.sh (see README). Email checks call the Mailpit API at {{mailpitUrl}} and wait 12 s first.\n\n1. Reporter (bob): create, view, edit, comment, see it in my list, get an email, history.\n2. Resolver (dan, Database team): get the new-incident email, take it, comment, edit, escalate, review, resolve, close, history."
   },
   "item": [
     {

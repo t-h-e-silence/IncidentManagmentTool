@@ -2,7 +2,7 @@
   "info": {
     "name": "Incident Management",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
-    "description": "Every endpoint of the controller. Start the app with the seed profile (see README). The caller is the X-User-Id header: a username (ada, alice, bob, carol, dan, erin) or a user id. {{bob}} = bob; {{bobId}} etc. hold the ids. Run 'Create incident' first: it stores {{incidentId}}. The requests are a catalogue, not a sequence; for ordered, tested runs use the 'flows' collection."
+    "description": "Every endpoint of the controller. Start the app and load the demo data with seed.sh (see README). The caller is the X-User-Id header: a username (ada, alice, bob, carol, dan, erin) or a user id. {{bob}} = bob; {{bobId}} etc. hold the ids. Run 'Create incident' first: it stores {{incidentId}}. The requests are a catalogue, not a sequence; for ordered, tested runs use the 'flows' collection."
   },
   "item": [
     {

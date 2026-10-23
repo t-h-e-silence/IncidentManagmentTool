@@ -1,4 +1,4 @@
-package modules.controller;
+package modules.organization.service;
 
 import java.util.List;
 import java.util.Map;
@@ -31,8 +31,8 @@ import org.springframework.context.annotation.Configuration;
 @Configuration
 public class OpenApiConfig {
 
-    static final String TEAMS = "Teams";
-    static final String INCIDENTS = "Incidents";
+    public static final String TEAMS = "Teams";
+    public static final String INCIDENTS = "Incidents";
 
     private static final String CALLER = "caller";
     private static final String PROBLEM = "Problem";
@@ -74,12 +74,25 @@ public class OpenApiConfig {
                                 de-escalate (severity, with emails), and move them through the lifecycle.
 
                                 **Caller:** every request names the acting user in the `%s` header, as a username \
-                                (`ada`, `alice`, `bob`, `carol`, `dan`, `erin` with the `seed` profile) or a user id. \
+                                (`ada`, `alice`, `bob`, `carol`, `dan`, `erin` from the demo data) or a user id. \
                                 Click **Authorize** and enter e.g. `dan`. There is no login.
+
+                                **Seeded users** (demo data, `seed.sh`):
+
+                                | Username | Name | Team and role | Can |
+                                |---|---|---|---|
+                                | `ada` | Ada Admin | no team, system ADMIN | admin functions |
+                                | `alice` | Alice Lead | Database TEAM_LEAD, Network RESPONDER | work Database and Network incidents |
+                                | `bob` | Bob Reporter | no team | report incidents (up to SEV2), edit and comment on their own |
+                                | `carol` | Carol Platform | Platform TEAM_LEAD | work Platform incidents |
+                                | `dan` | Dan Dba | Database RESPONDER | work Database incidents |
+                                | `erin` | Erin Network | Network TEAM_LEAD | work Network incidents |
 
                                 **Seeded ids:** teams Platform `10000000-0000-0000-0000-000000000001`, Database \
                                 `…0002`, Network `…0003`; categories Payments `30000000-0000-0000-0000-000000000001`, \
-                                Web application `…0002`, Database `…0003`, VPN `…0004`, Network `…0005`.
+                                Web application `…0002`, Database `…0003`, VPN `…0004`, Network `…0005`. \
+                                The category decides the owning team: Payments and Web application → Platform, \
+                                Database → Database, VPN and Network → Network.
 
                                 **Errors** are RFC 9457 problem details (`application/problem+json`)."""
                                 .formatted(ActingUser.HEADER)))

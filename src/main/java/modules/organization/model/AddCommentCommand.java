@@ -1,4 +1,4 @@
-package modules.controller.model;
+package modules.organization.model;
 
 import io.swagger.v3.oas.annotations.media.Schema;
 

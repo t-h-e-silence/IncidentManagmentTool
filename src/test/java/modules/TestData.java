@@ -11,7 +11,7 @@ import modules.common.model.Recipient;
 import modules.common.model.SystemRole;
 
 /**
- * Ids and actors used by unit tests; the same ids as the {@code seed} profile.
+ * Ids and actors used by unit tests; the same ids as the demo data ({@code db/scripts/seed.sql}).
  */
 public final class TestData {
 

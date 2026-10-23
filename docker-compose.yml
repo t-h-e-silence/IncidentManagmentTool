@@ -1,4 +1,4 @@
-# Local dependencies: `docker compose up -d`, then `mvn spring-boot:run -Dspring-boot.run.profiles=seed`.
+# Local dependencies: `docker compose up -d`, then `mvn spring-boot:run` and `./src/main/resources/db/scripts/seed.sh` (demo data).
 services:
   postgres:
     image: postgres:17

@@ -78,7 +78,7 @@ public class OrganizationServiceImpl implements OrganizationService {
     }
 
     /**
-     * Says at startup who can use the system, and warns when nobody can (e.g. the {@code seed} profile was not used).
+     * Says at startup who can use the system, and warns when nobody can (e.g. {@code seed.sh} was not run).
      */
     @EventListener(ApplicationReadyEvent.class)
     public void logUsersWhoCanAct() {
@@ -89,7 +89,7 @@ public class OrganizationServiceImpl implements OrganizationService {
                 .toList();
         if (names.isEmpty()) {
             log.warn("No users can act: the database has no active users. For demo users (ada, alice, bob, carol, "
-                    + "dan, erin) start the app with the 'seed' profile (-Dspring.profiles.active=seed)");
+                    + "dan, erin) run src/main/resources/db/scripts/seed.sh");
         } else {
             log.info("{} user(s) can act: {}", names.size(), names);
         }
