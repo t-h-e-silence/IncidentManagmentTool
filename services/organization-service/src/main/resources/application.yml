@@ -1,0 +1,30 @@
+server:
+  # Ports: organization 8081, incident 8082, audit 8083; notification and escalation have no HTTP API.
+  port: ${PORT:8081}
+
+springdoc:
+  swagger-ui:
+    # Keeps the X-User-Id entered under "Authorize" across page reloads.
+    persist-authorization: true
+    operations-sorter: method
+
+logging:
+  level:
+    # DEBUG shows how each request's X-User-Id was resolved.
+    platform.web: DEBUG
+
+spring:
+  application:
+    name: organization-service
+  datasource:
+    # Own database (ADR D5); services/docker-compose.yml publishes Postgres on 5434.
+    url: ${DB_URL:jdbc:postgresql://localhost:5434/organization}
+    username: ${DB_USER:organization}
+    password: ${DB_PASSWORD:organization}
+  jpa:
+    hibernate:
+      # Schemas are owned by Flyway; Hibernate only checks that entities match them.
+      ddl-auto: validate
+  flyway:
+    locations: classpath:db/migration
+    schemas: organization

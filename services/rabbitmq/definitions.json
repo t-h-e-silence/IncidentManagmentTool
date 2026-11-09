@@ -1,0 +1,71 @@
+{
+  "vhosts": [
+    {
+      "name": "incident-management"
+    }
+  ],
+  "users": [
+    {
+      "name": "admin",
+      "password": "admin",
+      "tags": "administrator"
+    },
+    {
+      "name": "incident-service",
+      "password": "incident-service",
+      "tags": ""
+    },
+    {
+      "name": "audit-service",
+      "password": "audit-service",
+      "tags": ""
+    },
+    {
+      "name": "notification-service",
+      "password": "notification-service",
+      "tags": ""
+    },
+    {
+      "name": "escalation-service",
+      "password": "escalation-service",
+      "tags": ""
+    }
+  ],
+  "permissions": [
+    {
+      "user": "admin",
+      "vhost": "incident-management",
+      "configure": ".*",
+      "write": ".*",
+      "read": ".*"
+    },
+    {
+      "user": "incident-service",
+      "vhost": "incident-management",
+      "configure": "^(incidents\\.events|unrouted)$",
+      "write": "^(incidents\\.events|unrouted)$",
+      "read": "^(incidents\\.events|unrouted)$"
+    },
+    {
+      "user": "audit-service",
+      "vhost": "incident-management",
+      "configure": "^(incidents\\.events|dlx|audit\\..*)$",
+      "write": "^(unrouted|dlx|audit\\..*)$",
+      "read": "^(incidents\\.events|dlx|audit\\..*)$"
+    },
+    {
+      "user": "notification-service",
+      "vhost": "incident-management",
+      "configure": "^(incidents\\.events|notifications\\..*|dlx)$",
+      "write": "^(unrouted|dlx|notifications\\.(urgent|normal)(\\.dlq)?)$",
+      "read": "^(incidents\\.events|notifications\\..*|dlx)$"
+    },
+    {
+      "user": "escalation-service",
+      "vhost": "incident-management",
+      "configure": "^(incidents\\.events|notifications\\.commands|unrouted|dlx|escalations\\..*)$",
+      "write": "^(notifications\\.commands|unrouted|dlx|escalations\\..*)$",
+      "read": "^(incidents\\.events|notifications\\.commands|unrouted|dlx|escalations\\..*)$"
+    }
+  ]
+}

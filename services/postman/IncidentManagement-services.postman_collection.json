@@ -1,0 +1,1075 @@
+{
+  "info": {
+    "_postman_id": "05376bdf-efe9-5a4a-8a8b-61278b430c01",
+    "name": "Incident Management – microservices",
+    "description": "Every public endpoint of organization-, incident- and audit-service, plus organization's /internal API and the emails notification-service sends (checked in Mailpit), with assertions, so the collection is also the smoke test of ADR-0001 D12.\n\n**Configure:** use the *services-local* environment: one URL per service (organizationUrl, incidentUrl, auditUrl; there is no API gateway). Folder 2 calls organization's internal API ({{internalUrl}}). Users and demo ids are collection variables; change them under the collection's *Variables* tab.\n\n**Demo data** (fixed ids) comes from each service's `V…__demo_data.sql` migration. The demo incidents are only read, never changed, so the collection can run again and again.\n\n**Run all:** Postman *Run collection*, or `newman run IncidentManagement-services.postman_collection.json -e services-local.postman_environment.json`.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "organizationUrl",
+      "value": "http://localhost:8081",
+      "description": "Overridden by the environment"
+    },
+    {
+      "key": "incidentUrl",
+      "value": "http://localhost:8082",
+      "description": "Overridden by the environment"
+    },
+    {
+      "key": "auditUrl",
+      "value": "http://localhost:8083",
+      "description": "Overridden by the environment"
+    },
+    {
+      "key": "internalUrl",
+      "value": "http://localhost:8081",
+      "description": "organization-service, for folder 2 (its internal API)"
+    },
+    {
+      "key": "mailpitUrl",
+      "value": "http://localhost:8025",
+      "description": "Mailpit, where notification-service sends the emails; overridden by the environment"
+    },
+    {
+      "key": "ada",
+      "value": "ada",
+      "description": "Ada Admin, ADMIN, no team"
+    },
+    {
+      "key": "alice",
+      "value": "alice",
+      "description": "Alice Lead: TEAM_LEAD of Database, RESPONDER in Network"
+    },
+    {
+      "key": "bob",
+      "value": "bob",
+      "description": "Bob Reporter: no team, can only report and comment on his incidents"
+    },
+    {
+      "key": "carol",
+      "value": "carol",
+      "description": "Carol Platform: TEAM_LEAD of Platform"
+    },
+    {
+      "key": "dan",
+      "value": "dan",
+      "description": "Dan Dba: RESPONDER in Database"
+    },
+    {
+      "key": "erin",
+      "value": "erin",
+      "description": "Erin Network: TEAM_LEAD of Network"
+    },
+    {
+      "key": "bobId",
+      "value": "20000000-0000-0000-0000-000000000003"
+    },
+    {
+      "key": "teamPlatform",
+      "value": "10000000-0000-0000-0000-000000000001"
+    },
+    {
+      "key": "teamDatabase",
+      "value": "10000000-0000-0000-0000-000000000002"
+    },
+    {
+      "key": "teamNetwork",
+      "value": "10000000-0000-0000-0000-000000000003"
+    },
+    {
+      "key": "categoryPayments",
+      "value": "30000000-0000-0000-0000-000000000001"
+    },
+    {
+      "key": "categoryDatabase",
+      "value": "30000000-0000-0000-0000-000000000003"
+    },
+    {
+      "key": "categoryVpn",
+      "value": "30000000-0000-0000-0000-000000000004"
+    },
+    {
+      "key": "demoIncidentOpen",
+      "value": "40000000-0000-0000-0000-000000000001",
+      "description": "OPEN, Database team, reported by Bob, one comment"
+    },
+    {
+      "key": "demoIncidentInProgress",
+      "value": "40000000-0000-0000-0000-000000000002",
+      "description": "IN_PROGRESS, Network team"
+    },
+    {
+      "key": "demoIncidentResolved",
+      "value": "40000000-0000-0000-0000-000000000003",
+      "description": "RESOLVED, Platform team"
+    },
+    {
+      "key": "incidentId",
+      "value": "",
+      "description": "Set by 'Create an incident'"
+    },
+    {
+      "key": "idempotencyKey",
+      "value": "",
+      "description": "Set by 'Create an incident' (a new UUID per run)"
+    },
+    {
+      "key": "emailDelayMs",
+      "value": "3000",
+      "description": "Wait before checking Mailpit: emails follow from events (urgent ones within about a second)"
+    },
+    {
+      "key": "historyDelayMs",
+      "value": "2000",
+      "description": "Wait before reading a history: it is built from events and may lag (ADR D3)"
+    }
+  ],
+  "item": [
+    {
+      "name": "1. Organization",
+      "description": "organization-service, public.",
+      "item": [
+        {
+          "name": "List teams",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-User-Id",
+                "value": "{{dan}}",
+                "description": "Acting user: username or user id"
+              }
+            ],
+            "url": "{{organizationUrl}}/teams",
+            "description": "All teams by name, archived ones included, each with its active members."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status 200\", () => pm.response.to.have.status(200));",
+                  "const teams = pm.response.json();",
+                  "pm.test(\"three demo teams\", () => pm.expect(teams.map(t => t.name)).to.include.members([\"Database\", \"Network\", \"Platform\"]));",
+                  "pm.test(\"Dan is in Database\", () => pm.expect(teams.find(t => t.name === \"Database\").members.map(m => m.name)).to.include(\"Dan Dba\"));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "2. Organization internal (service-to-service)",
+      "description": "organization-service /internal/**: no X-User-Id, called by the other services, not part of the public API.",
+      "item": [
+        {
+          "name": "Active actor",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{internalUrl}}/internal/actors/{{alice}}",
+            "description": "Who may act: id, name, role and non-archived teams. 401 if unknown, deactivated or SYSTEM."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"Alice is in two teams\", () => pm.expect(pm.response.json().teamIds).to.have.length(2));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "User id",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{internalUrl}}/internal/users/{{bob}}/id",
+            "description": "The id of a user given by username or id, active or not. 404 for an unknown username."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"Bob's id\", () => pm.expect(pm.response.json().id).to.eql(pm.variables.get(\"bobId\")));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Category routing",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{internalUrl}}/internal/categories/{{categoryDatabase}}/routing",
+            "description": "The team that owns new incidents of an active category."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"Database category goes to the Database team\", () => pm.expect(pm.response.json().teamId).to.eql(pm.variables.get(\"teamDatabase\")));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Team",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{internalUrl}}/internal/teams/{{teamDatabase}}",
+            "description": "A team with its archived flag and active members."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"not archived\", () => pm.expect(pm.response.json().archived).to.eql(false));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Active admins",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{internalUrl}}/internal/admins",
+            "description": "They receive the emails of teams without active members."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"Ada\", () => pm.expect(pm.response.json().map(a => a.name)).to.include(\"Ada Admin\"));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Recipient",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{internalUrl}}/internal/users/{{bobId}}/recipient",
+            "description": "Name and email of a user who may be emailed."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"email\", () => pm.expect(pm.response.json().email).to.eql(\"bob@example.com\"));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "3. Incidents: demo data",
+      "description": "incident-service, reading the demo incidents.",
+      "item": [
+        {
+          "name": "List all incidents",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-User-Id",
+                "value": "{{dan}}",
+                "description": "Acting user: username or user id"
+              }
+            ],
+            "url": "{{incidentUrl}}/incidents",
+            "description": "Every incident in any status, newest first."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"includes the demo incidents\", () => pm.expect(pm.response.json().map(i => i.id)).to.include.members([pm.variables.get(\"demoIncidentOpen\"), pm.variables.get(\"demoIncidentInProgress\"), pm.variables.get(\"demoIncidentResolved\")]));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "List a team's incidents",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-User-Id",
+                "value": "{{erin}}",
+                "description": "Acting user: username or user id"
+              }
+            ],
+            "url": "{{incidentUrl}}/teams/{{teamNetwork}}/incidents",
+            "description": "Incidents the team owns now. 404 if the team does not exist."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"all owned by Network\", () => pm.response.json().forEach(i => pm.expect(i.teamId).to.eql(pm.variables.get(\"teamNetwork\"))));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "List incidents reported by a user",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-User-Id",
+                "value": "{{dan}}",
+                "description": "Acting user: username or user id"
+              }
+            ],
+            "url": "{{incidentUrl}}/users/{{bob}}/incidents",
+            "description": "Newest first; the user may be given by username or id. 404 if no such user."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"all reported by Bob\", () => pm.response.json().forEach(i => pm.expect(i.reporterId).to.eql(pm.variables.get(\"bobId\"))));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "View an incident",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-User-Id",
+                "value": "{{dan}}",
+                "description": "Acting user: username or user id"
+              }
+            ],
+            "url": "{{incidentUrl}}/incidents/{{demoIncidentOpen}}",
+            "description": "With its comments, oldest first."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status 200\", () => pm.response.to.have.status(200));",
+                  "const i = pm.response.json();",
+                  "pm.test(\"OPEN with one comment\", () => { pm.expect(i.status).to.eql(\"OPEN\"); pm.expect(i.comments).to.have.length(1); });"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "4. Incidents: a full flow",
+      "description": "Runs in order on a new incident: create (with an idempotency key), repeat, rename, escalate with hand-over, acknowledge by the new team, comment, then read the history the events produced.",
+      "item": [
+        {
+          "name": "Create an incident",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-User-Id",
+                "value": "{{bob}}",
+                "description": "Acting user: username or user id"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{idempotencyKey}}",
+                "description": "Optional; a repeat with the same key and body returns the first response"
+              }
+            ],
+            "url": "{{incidentUrl}}/incidents",
+            "description": "Any active user; the category decides the owning team. A reporter may set at most SEV2.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"title\": \"Checkout is slow\",\n  \"description\": \"Pages take 10 s to load\",\n  \"categoryId\": \"{{categoryDatabase}}\",\n  \"severity\": \"SEV2\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set(\"idempotencyKey\", pm.variables.replaceIn(\"{{$guid}}\"));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status 201\", () => pm.response.to.have.status(201));",
+                  "const i = pm.response.json();",
+                  "pm.collectionVariables.set(\"incidentId\", i.id);",
+                  "pm.test(\"OPEN for the Database team\", () => { pm.expect(i.status).to.eql(\"OPEN\"); pm.expect(i.teamId).to.eql(pm.variables.get(\"teamDatabase\")); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Repeat with the same Idempotency-Key",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-User-Id",
+                "value": "{{bob}}",
+                "description": "Acting user: username or user id"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{idempotencyKey}}",
+                "description": "Optional; a repeat with the same key and body returns the first response"
+              }
+            ],
+            "url": "{{incidentUrl}}/incidents",
+            "description": "Same key and body: the first response comes back and no second incident is created.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"title\": \"Checkout is slow\",\n  \"description\": \"Pages take 10 s to load\",\n  \"categoryId\": \"{{categoryDatabase}}\",\n  \"severity\": \"SEV2\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status 201\", () => pm.response.to.have.status(201));",
+                  "pm.test(\"same incident\", () => pm.expect(pm.response.json().id).to.eql(pm.collectionVariables.get(\"incidentId\")));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Same key, different body",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-User-Id",
+                "value": "{{bob}}",
+                "description": "Acting user: username or user id"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{idempotencyKey}}",
+                "description": "Optional; a repeat with the same key and body returns the first response"
+              }
+            ],
+            "url": "{{incidentUrl}}/incidents",
+            "description": "409: the key was already used for another request.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"title\": \"Something else\",\n  \"categoryId\": \"{{categoryDatabase}}\",\n  \"severity\": \"SEV3\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status 409\", () => pm.response.to.have.status(409));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Rename (reporter)",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "X-User-Id",
+                "value": "{{bob}}",
+                "description": "Acting user: username or user id"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{incidentUrl}}/incidents/{{incidentId}}",
+            "description": "Title and description: owning team or reporter; no emails.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"title\": \"Primary DB slow\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"renamed\", () => pm.expect(pm.response.json().title).to.eql(\"Primary DB slow\"));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Escalate and hand over",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "X-User-Id",
+                "value": "{{dan}}",
+                "description": "Acting user: username or user id"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{incidentUrl}}/incidents/{{incidentId}}",
+            "description": "Owning team only: severity up, handed over to Platform; it is OPEN again for the new team.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"severity\": \"SEV1\",\n  \"targetTeamId\": \"{{teamPlatform}}\",\n  \"reason\": \"connection pool of the payments service\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status 200\", () => pm.response.to.have.status(200));",
+                  "const i = pm.response.json();",
+                  "pm.test(\"SEV1, Platform, OPEN\", () => { pm.expect(i.severity).to.eql(\"SEV1\"); pm.expect(i.teamId).to.eql(pm.variables.get(\"teamPlatform\")); pm.expect(i.status).to.eql(\"OPEN\"); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Previous team may no longer change it",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "X-User-Id",
+                "value": "{{dan}}",
+                "description": "Acting user: username or user id"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{incidentUrl}}/incidents/{{incidentId}}",
+            "description": "403: Dan is not in the owning team any more.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"status\": \"IN_PROGRESS\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status 403\", () => pm.response.to.have.status(403));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Acknowledge (new team)",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "X-User-Id",
+                "value": "{{carol}}",
+                "description": "Acting user: username or user id"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{incidentUrl}}/incidents/{{incidentId}}",
+            "description": "Carol (Platform) moves it to IN_PROGRESS.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"status\": \"IN_PROGRESS\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"IN_PROGRESS\", () => pm.expect(pm.response.json().status).to.eql(\"IN_PROGRESS\"));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Emails of the new incident",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{mailpitUrl}}/api/v1/search?query={{incidentId}}",
+            "description": "Mailpit: the emails notification-service sent about this incident (the id is in every body). Waits {{emailDelayMs}} ms first. The escalation emails come from escalation-service."
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "setTimeout(() => {}, Number(pm.variables.get(\"emailDelayMs\")));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status 200\", () => pm.response.to.have.status(200));",
+                  "const mails = pm.response.json().messages.map(m => ({to: m.To[0].Address, subject: m.Subject}));",
+                  "pm.test(\"team emailed about the new incident\", () => [\"alice@example.com\", \"dan@example.com\"].forEach(to => pm.expect(mails.some(m => m.to === to && m.subject.startsWith(\"[SEV2] New incident:\"))).to.be.true));",
+                  "pm.test(\"reporter emailed about the acknowledgement\", () => pm.expect(mails.some(m => m.to === \"bob@example.com\" && m.subject.startsWith(\"[SEV1] Your incident is being worked on:\"))).to.be.true);",
+                  "pm.test(\"escalation: new team, previous team and reporter each get their own text; Dan, who escalated, none\", () => { pm.expect(mails.some(m => m.to === \"carol@example.com\" && m.subject.startsWith(\"[SEV1] Escalated to you:\"))).to.be.true; pm.expect(mails.some(m => m.to === \"alice@example.com\" && m.subject.startsWith(\"[SEV1] Handed over to Platform:\"))).to.be.true; pm.expect(mails.some(m => m.to === \"bob@example.com\" && m.subject.startsWith(\"[SEV1] Your incident was escalated:\"))).to.be.true; pm.expect(mails.some(m => m.to === \"dan@example.com\" && m.subject.includes(\"Escalated\"))).to.be.false; });",
+                  "pm.test(\"nobody got the same email twice\", () => pm.expect(new Set(mails.map(m => m.to + m.subject)).size).to.eql(mails.length));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Comment (reporter)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-User-Id",
+                "value": "{{bob}}",
+                "description": "Acting user: username or user id"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{incidentUrl}}/incidents/{{incidentId}}/comments",
+            "description": "Owning team or reporter, while the incident is active.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"text\": \"Also affects the mobile app\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status 201\", () => pm.response.to.have.status(201));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "History of the new incident",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-User-Id",
+                "value": "{{bob}}",
+                "description": "Acting user: username or user id"
+              }
+            ],
+            "url": "{{auditUrl}}/incidents/{{incidentId}}/history",
+            "description": "audit-service builds it from the events, so this waits {{historyDelayMs}} ms first (ADR D3)."
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "setTimeout(() => {}, Number(pm.variables.get(\"historyDelayMs\")));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"one entry per change, in order\", () => pm.expect(pm.response.json().map(e => e.action)).to.eql([\"INCIDENT_CREATED\", \"DETAILS_UPDATED\", \"ESCALATED\", \"STATUS_CHANGED\", \"COMMENT_ADDED\"]));",
+                  "pm.test(\"hand-over recorded\", () => pm.expect(pm.response.json()[2].details.toTeam).to.eql(pm.variables.get(\"teamPlatform\")));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "5. Audit: demo data",
+      "description": "audit-service, reading the demo history.",
+      "item": [
+        {
+          "name": "History of an incident",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-User-Id",
+                "value": "{{alice}}",
+                "description": "Acting user: username or user id"
+              }
+            ],
+            "url": "{{auditUrl}}/incidents/{{demoIncidentResolved}}/history",
+            "description": "Oldest first: who did what and when, with details."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status 200\", () => pm.response.to.have.status(200));",
+                  "const h = pm.response.json();",
+                  "pm.test(\"created, then worked through to RESOLVED\", () => { pm.expect(h[0].action).to.eql(\"INCIDENT_CREATED\"); pm.expect(h[h.length - 1].details.to).to.eql(\"RESOLVED\"); });"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "6. Errors",
+      "description": "Problem details (RFC 9457) with the same status codes as the monolith.",
+      "item": [
+        {
+          "name": "Missing X-User-Id → 401",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{incidentUrl}}/incidents",
+            "description": "No caller header."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status 401\", () => pm.response.to.have.status(401));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Unknown user → 401",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-User-Id",
+                "value": "{{nobody}}",
+                "description": "Acting user: username or user id"
+              }
+            ],
+            "url": "{{organizationUrl}}/teams",
+            "description": "The `nobody` variable is not defined, so the header is the text {{nobody}}: no such user."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status 401\", () => pm.response.to.have.status(401));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Reporter sets SEV1 → 409",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-User-Id",
+                "value": "{{bob}}",
+                "description": "Acting user: username or user id"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{incidentUrl}}/incidents",
+            "description": "A reporter may set at most SEV2.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"title\": \"Everything is down\",\n  \"categoryId\": \"{{categoryPayments}}\",\n  \"severity\": \"SEV1\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status 409\", () => pm.response.to.have.status(409));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Malformed id → 400",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-User-Id",
+                "value": "{{dan}}",
+                "description": "Acting user: username or user id"
+              }
+            ],
+            "url": "{{incidentUrl}}/incidents/not-a-uuid",
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status 400\", () => pm.response.to.have.status(400));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Unknown incident → 404",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-User-Id",
+                "value": "{{dan}}",
+                "description": "Acting user: username or user id"
+              }
+            ],
+            "url": "{{incidentUrl}}/incidents/40000000-0000-0000-0000-000000000999",
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status 404\", () => pm.response.to.have.status(404));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "History of an unknown incident → 404",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-User-Id",
+                "value": "{{dan}}",
+                "description": "Acting user: username or user id"
+              }
+            ],
+            "url": "{{auditUrl}}/incidents/40000000-0000-0000-0000-000000000999/history",
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status 404\", () => pm.response.to.have.status(404));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Comment on a resolved incident → 409",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-User-Id",
+                "value": "{{carol}}",
+                "description": "Acting user: username or user id"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{incidentUrl}}/incidents/{{demoIncidentResolved}}/comments",
+            "description": "Only OPEN, IN_PROGRESS and IN_REVIEW incidents take comments.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"text\": \"One more thing\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status 409\", () => pm.response.to.have.status(409));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

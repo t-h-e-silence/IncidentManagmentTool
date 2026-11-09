@@ -1,0 +1,63 @@
+server:
+  # Ports: organization 8081, incident 8082, audit 8083; notification and escalation have no HTTP API.
+  port: ${PORT:8082}
+
+springdoc:
+  swagger-ui:
+    # Keeps the X-User-Id entered under "Authorize" across page reloads.
+    persist-authorization: true
+    operations-sorter: method
+
+logging:
+  level:
+    # DEBUG shows how each request's X-User-Id was resolved and how many events each relay run published.
+    platform.web: DEBUG
+    incidents.service.OutboxRelayJob: DEBUG
+
+spring:
+  application:
+    name: incident-service
+  datasource:
+    # Own database (ADR D5); services/docker-compose.yml publishes Postgres on 5434.
+    url: ${DB_URL:jdbc:postgresql://localhost:5434/incidents}
+    username: ${DB_USER:incidents}
+    password: ${DB_PASSWORD:incidents}
+  jpa:
+    hibernate:
+      # Schemas are owned by Flyway; Hibernate only checks that entities match them.
+      ddl-auto: validate
+  flyway:
+    locations: classpath:db/migration
+    schemas: incidents
+  rabbitmq:
+    host: ${RABBITMQ_HOST:localhost}
+    port: ${RABBITMQ_PORT:5672}
+    # Own RabbitMQ user: may write only to its own exchanges (ADR D14, services/rabbitmq/definitions.json).
+    username: ${RABBITMQ_USER:incident-service}
+    password: ${RABBITMQ_PASSWORD:incident-service}
+    virtual-host: incident-management
+    # The outbox row is marked published only after RabbitMQ's ack.
+    publisher-confirm-type: correlated
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+      # Short, so a Redis outage only slows requests down a little before organization-service is asked directly.
+      timeout: 500ms
+      connect-timeout: 500ms
+  http:
+    client:
+      # Calls to organization-service.
+      connect-timeout: 2s
+      read-timeout: 5s
+
+organization:
+  url: ${ORGANIZATION_URL:http://localhost:8081}
+  # How long organization answers are cached in Redis (ADR D6).
+  cache-ttl: 5m
+
+outbox:
+  relay:
+    interval: 1s
+    batch-size: 100
+    confirm-timeout: 10s

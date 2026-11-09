@@ -1,0 +1,70 @@
+server:
+  # Ports: organization 8081, incident 8082, audit 8083; notification and escalation have no HTTP API.
+  port: ${PORT:8083}
+
+springdoc:
+  swagger-ui:
+    # Keeps the X-User-Id entered under "Authorize" across page reloads.
+    persist-authorization: true
+    operations-sorter: method
+
+logging:
+  level:
+    # DEBUG shows how each request's X-User-Id was resolved and which repeated events were skipped.
+    platform.web: DEBUG
+    audit.service.AuditServiceImpl: DEBUG
+
+spring:
+  application:
+    name: audit-service
+  datasource:
+    # Own database (ADR D5); services/docker-compose.yml publishes Postgres on 5434.
+    url: ${DB_URL:jdbc:postgresql://localhost:5434/audit}
+    username: ${DB_USER:audit}
+    password: ${DB_PASSWORD:audit}
+  jpa:
+    hibernate:
+      # Schemas are owned by Flyway; Hibernate only checks that entities match them.
+      ddl-auto: validate
+  flyway:
+    locations: classpath:db/migration
+    schemas: audit
+  rabbitmq:
+    host: ${RABBITMQ_HOST:localhost}
+    port: ${RABBITMQ_PORT:5672}
+    # Own RabbitMQ user: may read only its own queues (ADR D14, services/rabbitmq/definitions.json).
+    username: ${RABBITMQ_USER:audit-service}
+    password: ${RABBITMQ_PASSWORD:audit-service}
+    virtual-host: incident-management
+    listener:
+      simple:
+        # Ack after the listener's transaction commits; a rejected message is dead-lettered, not requeued.
+        acknowledge-mode: auto
+        default-requeue-rejected: false
+        concurrency: 1
+        max-concurrency: 2
+        prefetch: 50
+        # 1 attempt + 3 retries after 1 s, 5 s and 25 s, then the dead-letter queue (ADR D8).
+        retry:
+          enabled: true
+          max-attempts: 4
+          initial-interval: 1s
+          multiplier: 5
+          max-interval: 25s
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+      # Short, so a Redis outage only slows requests down a little before organization-service is asked directly.
+      timeout: 500ms
+      connect-timeout: 500ms
+  http:
+    client:
+      # Calls to organization-service.
+      connect-timeout: 2s
+      read-timeout: 5s
+
+organization:
+  url: ${ORGANIZATION_URL:http://localhost:8081}
+  # How long organization answers are cached in Redis (ADR D6).
+  cache-ttl: 5m

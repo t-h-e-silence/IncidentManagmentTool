@@ -1,0 +1,176 @@
+openapi: 3.1.0
+info:
+  title: Audit service
+  description: |-
+    The append-only history of every incident, built from incident events.
+
+    **Caller:** the `X-User-Id` header, a username (demo users `ada`, `alice`, `bob`, `carol`, `dan`, `erin`) or a user id. Click **Authorize** and enter e.g. `dan`.
+
+    **Errors** are RFC 9457 problem details (`application/problem+json`).
+  version: "1"
+servers:
+- url: /
+  description: This service
+- url: http://localhost:8083
+  description: "Local, default port"
+tags:
+- name: Incidents
+  description: History of an incident
+paths:
+  /incidents/{incidentId}/history:
+    get:
+      tags:
+      - Incidents
+      summary: Audit history of an incident
+      description: "Oldest first: who did what and when, with details (from/to status,\
+        \ severity and team, reasons). Changes made by one request share a `correlationId`.\
+        \ Built from incident events, so the newest changes may show a few seconds\
+        \ late; 404 if nothing was recorded for the incident (yet)."
+      operationId: getIncidentHistory
+      parameters:
+      - name: incidentId
+        in: path
+        description: "Incident id; demo data: `40000000-0000-0000-0000-000000000001`\
+          \ (created, commented), `…0002` (acknowledged), `…0003` (worked through\
+          \ to RESOLVED)"
+        required: true
+        schema:
+          type: string
+          format: uuid
+        example: 40000000-0000-0000-0000-000000000003
+      responses:
+        "200":
+          description: OK
+          content:
+            '*/*':
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/AuditEntryView"
+        "400":
+          description: "Invalid input, e.g. malformed id or JSON, missing value"
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        "401":
+          description: "Header missing, or the user is unknown, deactivated or the\
+            \ system user"
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        "404":
+          description: Not found
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        "503":
+          description: "A service this one depends on is unavailable, retry"
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+      security:
+      - caller: []
+components:
+  schemas:
+    AuditEntryView:
+      type: object
+      description: One immutable entry of an incident's history
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: Entry id
+          example: 60000000-0000-0000-0000-000000000001
+        actorId:
+          type: string
+          format: uuid
+          description: User who made the change
+          example: 20000000-0000-0000-0000-000000000003
+        action:
+          type: string
+          description: What happened
+          enum:
+          - INCIDENT_CREATED
+          - COMMENT_ADDED
+          - STATUS_CHANGED
+          - DETAILS_UPDATED
+          - ESCALATED
+          - DE_ESCALATED
+          example: INCIDENT_CREATED
+        entityType:
+          type: string
+          description: Kind of thing that changed
+          enum:
+          - INCIDENT
+          - COMMENT
+          example: INCIDENT
+        entityId:
+          type: string
+          format: uuid
+          description: "Id of the thing that changed: the incident, or the comment\
+            \ for COMMENT_ADDED"
+          example: 40000000-0000-0000-0000-000000000001
+        incidentId:
+          type: string
+          format: uuid
+          description: Incident the entry belongs to
+          example: 40000000-0000-0000-0000-000000000001
+        details:
+          type: object
+          additionalProperties:
+            type: string
+          description: "What changed, by action. INCIDENT_CREATED: team, severity.\
+            \ DETAILS_UPDATED: fromTitle, toTitle, descriptionChanged. ESCALATED /\
+            \ DE_ESCALATED: fromSeverity, toSeverity, fromTeam, toTeam, reason. STATUS_CHANGED:\
+            \ from, to, note (if given). COMMENT_ADDED: none. Ids, not personal data"
+          example:
+            team: 10000000-0000-0000-0000-000000000002
+            severity: SEV2
+        correlationId:
+          type: string
+          description: "Shared by all entries one request produced, e.g. a PATCH that\
+            \ renames, escalates and acknowledges"
+          example: demo-0001-created
+        occurredAt:
+          type: string
+          format: date-time
+          description: When the change happened in incident-service (UTC); the history
+            is sorted by it
+          example: 2026-10-02T09:00:00Z
+    Problem:
+      type: object
+      description: "RFC 9457 problem detail, the body of every error response"
+      properties:
+        type:
+          type: string
+          description: "Problem type; always about:blank, the status says it all"
+          example: about:blank
+        title:
+          type: string
+          description: Reason phrase of the status code
+          example: Not Found
+        status:
+          type: integer
+          format: int32
+          description: "HTTP status code: 400 invalid input, 401 unknown or inactive\
+            \ caller, 403 not allowed, 404 not found, 409 business rule violated,\
+            \ 503 a service this one depends on is unavailable"
+          example: 404
+        detail:
+          type: string
+          description: "What went wrong, for a human"
+          example: Incident 40000000-0000-0000-0000-000000000009 not found
+        instance:
+          type: string
+          description: Path of the request
+          example: /incidents/40000000-0000-0000-0000-000000000009
+  securitySchemes:
+    caller:
+      type: apiKey
+      description: Username (e.g. `bob`) or user id of the acting user
+      name: X-User-Id
+      in: header

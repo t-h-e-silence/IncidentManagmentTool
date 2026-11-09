@@ -1,0 +1,158 @@
+# The whole system (ADR D10): `docker compose up -d --build` in services/. Each service is an independent project in
+# its own folder; this file only wires them to the shared infrastructure (Postgres, RabbitMQ, Redis, Mailpit).
+# Clients call each service on its own port: organization 8081, incident 8082, audit 8083 (no API gateway, ADR D13).
+# Postgres is published on 5434 (POSTGRES_PORT), so it does not clash with the monolith's docker-compose.yml (5432).
+name: incident-management-services
+
+services:
+  postgres:
+    image: postgres:17
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    ports:
+      - "${POSTGRES_PORT:-5434}:5432"
+    volumes:
+      # Creates one database and one user per service on the first start (empty volume).
+      - ./postgres/init:/docker-entrypoint-initdb.d:ro
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # Management UI: http://localhost:15672 (admin / admin). Vhost, users and permissions: rabbitmq/definitions.json.
+  rabbitmq:
+    image: rabbitmq:4.1-management
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    volumes:
+      - ./rabbitmq/definitions.conf:/etc/rabbitmq/conf.d/20-definitions.conf:ro
+      - ./rabbitmq/definitions.json:/etc/rabbitmq/definitions.json:ro
+      - rabbitmq-data:/var/lib/rabbitmq
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  # Cache of organization data for the other services (ADR D6).
+  redis:
+    image: redis:7.4
+    ports:
+      - "6379:6379"
+
+  # SMTP test server: notification-service sends to port 1025; the emails are visible at http://localhost:8025.
+  mailpit:
+    image: axllent/mailpit:latest
+    ports:
+      - "1025:1025"
+      - "8025:8025"
+
+  organization-service:
+    # Built from its own folder; when the service lives in its own repository, use its image instead.
+    build: ./organization-service
+    image: incident-management/organization-service:local
+    environment:
+      DB_URL: jdbc:postgresql://postgres:5432/organization
+      DB_USER: organization
+      DB_PASSWORD: organization
+    # Public entry point of this service (no API gateway, ADR D13).
+    ports:
+      - "8081:8081"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  incident-service:
+    # Built from its own folder; when the service lives in its own repository, use its image instead.
+    build: ./incident-service
+    image: incident-management/incident-service:local
+    environment:
+      DB_URL: jdbc:postgresql://postgres:5432/incidents
+      RABBITMQ_HOST: rabbitmq
+      REDIS_HOST: redis
+      ORGANIZATION_URL: http://organization-service:8081
+    # Public entry point of this service (no API gateway, ADR D13).
+    ports:
+      - "8082:8082"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+      redis:
+        condition: service_started
+      organization-service:
+        condition: service_started
+
+  audit-service:
+    # Built from its own folder; when the service lives in its own repository, use its image instead.
+    build: ./audit-service
+    image: incident-management/audit-service:local
+    environment:
+      DB_URL: jdbc:postgresql://postgres:5432/audit
+      RABBITMQ_HOST: rabbitmq
+      REDIS_HOST: redis
+      ORGANIZATION_URL: http://organization-service:8081
+    # Public entry point of this service (no API gateway, ADR D13).
+    ports:
+      - "8083:8083"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+      redis:
+        condition: service_started
+      organization-service:
+        condition: service_started
+
+  notification-service:
+    # Built from its own folder; when the service lives in its own repository, use its image instead.
+    build: ./notification-service
+    image: incident-management/notification-service:local
+    environment:
+      DB_URL: jdbc:postgresql://postgres:5432/notifications
+      RABBITMQ_HOST: rabbitmq
+      REDIS_HOST: redis
+      ORGANIZATION_URL: http://organization-service:8081
+      SMTP_HOST: mailpit
+    # No HTTP API and no host port, so it scales: docker compose up -d --scale notification-service=3 (ADR D8).
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+      redis:
+        condition: service_started
+      mailpit:
+        condition: service_started
+      organization-service:
+        condition: service_started
+
+  escalation-service:
+    # Built from its own folder; when the service lives in its own repository, use its image instead.
+    build: ./escalation-service
+    image: incident-management/escalation-service:local
+    environment:
+      DB_URL: jdbc:postgresql://postgres:5432/escalations
+      RABBITMQ_HOST: rabbitmq
+      REDIS_HOST: redis
+      ORGANIZATION_URL: http://organization-service:8081
+    # No HTTP API and no host port (ADR D1).
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+      redis:
+        condition: service_started
+      organization-service:
+        condition: service_started
+
+volumes:
+  postgres-data:
+  rabbitmq-data:

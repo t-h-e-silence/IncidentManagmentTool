@@ -1,0 +1,85 @@
+logging:
+  level:
+    # DEBUG shows repeated messages that were skipped and how many emails each delivery run attempted.
+    notifications.service: DEBUG
+
+spring:
+  application:
+    name: notification-service
+  main:
+    # No HTTP API (ADR D1): nothing listens on a port, so several instances can run side by side.
+    web-application-type: none
+  datasource:
+    # Own database (ADR D5); services/docker-compose.yml publishes Postgres on 5434.
+    url: ${DB_URL:jdbc:postgresql://localhost:5434/notifications}
+    username: ${DB_USER:notifications}
+    password: ${DB_PASSWORD:notifications}
+  jpa:
+    open-in-view: false
+    hibernate:
+      # Schemas are owned by Flyway; Hibernate only checks that entities match them.
+      ddl-auto: validate
+  flyway:
+    locations: classpath:db/migration
+    schemas: notifications
+  rabbitmq:
+    host: ${RABBITMQ_HOST:localhost}
+    port: ${RABBITMQ_PORT:5672}
+    # Own RabbitMQ user: may read only its own queues (ADR D14, services/rabbitmq/definitions.json).
+    username: ${RABBITMQ_USER:notification-service}
+    password: ${RABBITMQ_PASSWORD:notification-service}
+    virtual-host: incident-management
+    listener:
+      simple:
+        # Ack after the notifications are stored; a rejected message is dead-lettered, not requeued.
+        acknowledge-mode: auto
+        default-requeue-rejected: false
+        # 1 attempt + 3 retries after 1 s, 5 s and 25 s, then the dead-letter queue (ADR D8).
+        retry:
+          enabled: true
+          max-attempts: 4
+          initial-interval: 1s
+          multiplier: 5
+          max-interval: 25s
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+      # Short, so a Redis outage only slows things down a little before organization-service is asked directly.
+      timeout: 500ms
+      connect-timeout: 500ms
+  http:
+    client:
+      # Calls to organization-service.
+      connect-timeout: 2s
+      read-timeout: 5s
+  mail:
+    host: ${SMTP_HOST:localhost}
+    port: ${SMTP_PORT:1025}
+    username: ${SMTP_USER:}
+    password: ${SMTP_PASSWORD:}
+    properties:
+      mail.smtp.connectiontimeout: 10000
+      mail.smtp.timeout: 10000
+      mail.smtp.writetimeout: 10000
+
+organization:
+  url: ${ORGANIZATION_URL:http://localhost:8081}
+  # How long organization answers are cached in Redis (ADR D6).
+  cache-ttl: 5m
+
+notifications:
+  mail:
+    from: ${MAIL_FROM:incidents@example.com}
+  delivery:
+    # How often the delivery job sends due emails.
+    interval: 10s
+    batch-size: 50
+  # Consumers per instance (ADR D14): urgent mail gets more of them and a small prefetch.
+  consumers:
+    urgent:
+      concurrency: 5
+      prefetch: 5
+    normal:
+      concurrency: 2
+      prefetch: 20

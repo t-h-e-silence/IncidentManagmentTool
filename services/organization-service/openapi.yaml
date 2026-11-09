@@ -1,0 +1,398 @@
+openapi: 3.1.0
+info:
+  title: Organization service
+  description: |-
+    Users, teams, memberships and category routing.
+
+    **Public:** `GET /teams`, on this service's own port. The caller is the `X-User-Id` header, a username (demo users `ada`, `alice`, `bob`, `carol`, `dan`, `erin`) or a user id. Click **Authorize** and enter e.g. `dan`.
+
+    **Internal:** `/internal/**`, for the other services only; not part of the public API.
+
+    **Errors** are RFC 9457 problem details (`application/problem+json`).
+  version: "1"
+servers:
+- url: /
+  description: This service
+- url: http://localhost:8081
+  description: "Local, default port"
+tags:
+- name: Teams
+  description: Teams and their members
+- name: Internal
+  description: Organization data for the other services
+paths:
+  /teams:
+    get:
+      tags:
+      - Teams
+      summary: List teams
+      description: "All teams by name, archived ones included, each with its active\
+        \ members and their team role."
+      operationId: listTeams
+      responses:
+        "200":
+          description: OK
+          content:
+            '*/*':
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/TeamView"
+        "401":
+          description: "Header missing, or the user is unknown, deactivated or the\
+            \ system user"
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+      security:
+      - caller: []
+  /internal/users/{user}/id:
+    get:
+      tags:
+      - Internal
+      summary: User id
+      description: "The id of a user given by id or username, whether the user may\
+        \ act or not (e.g. to list a deactivated reporter's incidents). An id is returned\
+        \ as it is. 404 if no user has that username."
+      operationId: findUserId
+      parameters:
+      - name: user
+        in: path
+        description: Username or user id
+        required: true
+        schema:
+          type: string
+        example: bob
+      responses:
+        "200":
+          description: OK
+          content:
+            '*/*':
+              schema:
+                $ref: "#/components/schemas/UserId"
+        "404":
+          description: Not found
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+      security: []
+  /internal/users/{userId}/recipient:
+    get:
+      tags:
+      - Internal
+      summary: Recipient
+      description: "Name and email of a user who may be emailed. 404 if the user is\
+        \ unknown, deactivated or SYSTEM."
+      operationId: getRecipient
+      parameters:
+      - name: userId
+        in: path
+        description: User id
+        required: true
+        schema:
+          type: string
+          format: uuid
+        example: 20000000-0000-0000-0000-000000000003
+      responses:
+        "200":
+          description: OK
+          content:
+            '*/*':
+              schema:
+                $ref: "#/components/schemas/Recipient"
+        "400":
+          description: "Invalid input, e.g. malformed id or JSON, missing value"
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        "404":
+          description: Not found
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+      security: []
+  /internal/teams/{teamId}:
+    get:
+      tags:
+      - Internal
+      summary: Team
+      description: "A team, archived or not, with its active members by name. 404\
+        \ if the team is unknown."
+      operationId: getTeam
+      parameters:
+      - name: teamId
+        in: path
+        description: Team id
+        required: true
+        schema:
+          type: string
+          format: uuid
+        example: 10000000-0000-0000-0000-000000000002
+      responses:
+        "200":
+          description: OK
+          content:
+            '*/*':
+              schema:
+                $ref: "#/components/schemas/TeamView"
+        "400":
+          description: "Invalid input, e.g. malformed id or JSON, missing value"
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        "404":
+          description: Not found
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+      security: []
+  /internal/categories/{categoryId}/routing:
+    get:
+      tags:
+      - Internal
+      summary: Category routing
+      description: The team responsible for an active category. 404 if the category
+        is unknown or inactive.
+      operationId: getRouting
+      parameters:
+      - name: categoryId
+        in: path
+        description: Category id
+        required: true
+        schema:
+          type: string
+          format: uuid
+        example: 30000000-0000-0000-0000-000000000003
+      responses:
+        "200":
+          description: OK
+          content:
+            '*/*':
+              schema:
+                $ref: "#/components/schemas/CategoryRouting"
+        "400":
+          description: "Invalid input, e.g. malformed id or JSON, missing value"
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        "404":
+          description: Not found
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+      security: []
+  /internal/admins:
+    get:
+      tags:
+      - Internal
+      summary: Active admins
+      description: By name; they receive the emails of teams without active members.
+      operationId: getActiveAdmins
+      responses:
+        "200":
+          description: OK
+          content:
+            '*/*':
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Recipient"
+      security: []
+  /internal/actors/{user}:
+    get:
+      tags:
+      - Internal
+      summary: Active actor
+      description: "Id, name, system role and non-archived team ids of a user who\
+        \ may act. 401 if the user is unknown, deactivated or SYSTEM."
+      operationId: getActiveActor
+      parameters:
+      - name: user
+        in: path
+        description: Username or user id
+        required: true
+        schema:
+          type: string
+        example: bob
+      responses:
+        "200":
+          description: OK
+          content:
+            '*/*':
+              schema:
+                $ref: "#/components/schemas/Actor"
+        "401":
+          description: "Header missing, or the user is unknown, deactivated or the\
+            \ system user"
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+      security: []
+components:
+  schemas:
+    TeamMemberView:
+      type: object
+      description: An active member of a team
+      properties:
+        userId:
+          type: string
+          format: uuid
+          description: User id; usable as X-User-Id
+          example: 20000000-0000-0000-0000-000000000005
+        name:
+          type: string
+          description: Display name
+          example: Dan Dba
+        email:
+          type: string
+          description: "Email address, lower-case; where incident emails go"
+          example: dan@example.com
+        role:
+          type: string
+          description: Role in this team
+          enum:
+          - RESPONDER
+          - TEAM_LEAD
+          example: RESPONDER
+    TeamView:
+      type: object
+      description: A responder team with its active members
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: "Team id; incidents keep it, so a team is archived, never deleted"
+          example: 10000000-0000-0000-0000-000000000002
+        name:
+          type: string
+          description: Unique team name (≤ 200)
+          example: Database
+        archived:
+          type: boolean
+          description: "True if the team was archived: it keeps its incidents but\
+            \ can no longer receive new ones or be handed incidents over"
+          example: false
+        members:
+          type: array
+          description: "Active members only, by name; deactivated users are left out"
+          items:
+            $ref: "#/components/schemas/TeamMemberView"
+    UserId:
+      type: object
+      description: The id of a user
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: User id; an id given in the path is returned as it is
+          example: 20000000-0000-0000-0000-000000000003
+    Recipient:
+      type: object
+      description: "Someone who may be emailed: an active user with a contact address"
+      properties:
+        userId:
+          type: string
+          format: uuid
+          description: User id
+          example: 20000000-0000-0000-0000-000000000003
+        name:
+          type: string
+          description: "Display name, used in the greeting"
+          example: Bob Reporter
+        email:
+          type: string
+          description: Email address
+          example: bob@example.com
+    CategoryRouting:
+      type: object
+      description: An active category and the team responsible for its incidents
+      properties:
+        categoryId:
+          type: string
+          format: uuid
+          description: "Category id, chosen by the reporter"
+          example: 30000000-0000-0000-0000-000000000003
+        categoryName:
+          type: string
+          description: Category name; incidents keep it as a snapshot
+          example: Database
+        teamId:
+          type: string
+          format: uuid
+          description: Team that owns new incidents of this category
+          example: 10000000-0000-0000-0000-000000000002
+    Actor:
+      type: object
+      description: "A user who may act (active, not the system user), with what other\
+        \ services need for permission checks"
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: User id
+          example: 20000000-0000-0000-0000-000000000002
+        name:
+          type: string
+          description: Display name
+          example: Alice Lead
+        role:
+          type: string
+          description: Global role
+          enum:
+          - USER
+          - ADMIN
+          - SYSTEM
+          example: USER
+        teamIds:
+          type: array
+          description: Non-archived teams the user is a member of; decides which incidents
+            the user may work on
+          example:
+          - 10000000-0000-0000-0000-000000000002
+          - 10000000-0000-0000-0000-000000000003
+          items:
+            type: string
+            format: uuid
+          uniqueItems: true
+    Problem:
+      type: object
+      description: "RFC 9457 problem detail, the body of every error response"
+      properties:
+        type:
+          type: string
+          description: "Problem type; always about:blank, the status says it all"
+          example: about:blank
+        title:
+          type: string
+          description: Reason phrase of the status code
+          example: Not Found
+        status:
+          type: integer
+          format: int32
+          description: "HTTP status code: 400 invalid input, 401 unknown or inactive\
+            \ caller, 403 not allowed, 404 not found, 409 business rule violated,\
+            \ 503 a service this one depends on is unavailable"
+          example: 404
+        detail:
+          type: string
+          description: "What went wrong, for a human"
+          example: Incident 40000000-0000-0000-0000-000000000009 not found
+        instance:
+          type: string
+          description: Path of the request
+          example: /incidents/40000000-0000-0000-0000-000000000009
+  securitySchemes:
+    caller:
+      type: apiKey
+      description: Username (e.g. `bob`) or user id of the acting user
+      name: X-User-Id
+      in: header

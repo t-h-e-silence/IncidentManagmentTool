@@ -1,0 +1,2262 @@
+{
+  "info": {
+    "_postman_id": "59ee89fa-194b-5a01-a53b-57e5bd3d6c28",
+    "name": "Incident Management – reporter and assignee flows",
+    "description": "Complete flows from both sides: the **reporter** (Bob) and the **assignee**. There is no assignee field: an incident is owned by a team, and any member works on it. Here Dan (Database) is the assignee, Alice his team lead, Carol (Platform) the assignee after a hand-over, and Erin (Network) the assignee of a VPN incident.\n\nEach flow creates its own incident, checks what each side may and may not do, then checks every email in Mailpit (exactly which person gets which email) and the history in audit-service. Run a folder, or the whole collection, in order, with the *services-local* environment.\n\nThe roles are collection variables (`reporter`, `assignee`, `teamLead`, `platformAssignee`, `networkAssignee`); every write sends a new `Idempotency-Key`.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "organizationUrl",
+      "value": "http://localhost:8081"
+    },
+    {
+      "key": "incidentUrl",
+      "value": "http://localhost:8082"
+    },
+    {
+      "key": "auditUrl",
+      "value": "http://localhost:8083"
+    },
+    {
+      "key": "mailpitUrl",
+      "value": "http://localhost:8025"
+    },
+    {
+      "key": "reporter",
+      "value": "bob",
+      "description": "Bob Reporter: no team, reports incidents"
+    },
+    {
+      "key": "assignee",
+      "value": "dan",
+      "description": "Dan Dba: RESPONDER in Database"
+    },
+    {
+      "key": "teamLead",
+      "value": "alice",
+      "description": "Alice Lead: TEAM_LEAD of Database (and responder in Network)"
+    },
+    {
+      "key": "platformAssignee",
+      "value": "carol",
+      "description": "Carol Platform: TEAM_LEAD of Platform"
+    },
+    {
+      "key": "networkAssignee",
+      "value": "erin",
+      "description": "Erin Network: TEAM_LEAD of Network"
+    },
+    {
+      "key": "teamPlatform",
+      "value": "10000000-0000-0000-0000-000000000001"
+    },
+    {
+      "key": "teamDatabase",
+      "value": "10000000-0000-0000-0000-000000000002"
+    },
+    {
+      "key": "teamNetwork",
+      "value": "10000000-0000-0000-0000-000000000003"
+    },
+    {
+      "key": "categoryDatabase",
+      "value": "30000000-0000-0000-0000-000000000003"
+    },
+    {
+      "key": "categoryVpn",
+      "value": "30000000-0000-0000-0000-000000000004"
+    },
+    {
+      "key": "flowAIncident",
+      "value": "",
+      "description": "Set by flow A"
+    },
+    {
+      "key": "flowBIncident",
+      "value": "",
+      "description": "Set by flow B"
+    },
+    {
+      "key": "flowCIncident",
+      "value": "",
+      "description": "Set by flow C"
+    },
+    {
+      "key": "flowDIncident",
+      "value": "",
+      "description": "Set by flow D"
+    },
+    {
+      "key": "emailDelayMs",
+      "value": "3000",
+      "description": "Wait before checking Mailpit (SEV1/SEV2 emails go out within about a second)"
+    },
+    {
+      "key": "historyDelayMs",
+      "value": "2000",
+      "description": "Wait before reading a history: it is built from events"
+    }
+  ],
+  "item": [
+    {
+      "name": "A. Report → acknowledge → resolve → close",
+      "description": "Bob reports a database problem. The Database team (Alice, Dan) owns it; Dan works on it as the assignee, Alice resolves it, Dan closes it. Shows what the reporter may and may not do, and which emails each side gets.",
+      "item": [
+        {
+          "name": "Reporter: may not report SEV1",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-User-Id",
+                "value": "{{reporter}}",
+                "description": "Acting user"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{$guid}}",
+                "description": "A new key per request; repeat it to retry safely"
+              }
+            ],
+            "url": "{{incidentUrl}}/incidents",
+            "description": "A reporter may set at most SEV2; only the owning team escalates further.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"title\": \"Everything is down\",\n  \"categoryId\": \"{{categoryDatabase}}\",\n  \"severity\": \"SEV1\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status 409\", () => pm.response.to.have.status(409));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Reporter: report the incident",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-User-Id",
+                "value": "{{reporter}}",
+                "description": "Acting user"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{$guid}}",
+                "description": "A new key per request; repeat it to retry safely"
+              }
+            ],
+            "url": "{{incidentUrl}}/incidents",
+            "description": "Any active user may report. The category decides the owning team, whose members are emailed. A reporter may set at most SEV2.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"title\": \"Checkout is slow\",\n  \"description\": \"Pages take 10 s to load\",\n  \"categoryId\": \"{{categoryDatabase}}\",\n  \"severity\": \"SEV2\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status 201\", () => pm.response.to.have.status(201));",
+                  "pm.collectionVariables.set(\"flowAIncident\", pm.response.json().id);",
+                  "pm.test(\"status is OPEN\", () => pm.expect(pm.response.json().status).to.eql(\"OPEN\"));",
+                  "pm.test(\"teamId is {{teamDatabase}}\", () => pm.expect(pm.response.json().teamId).to.eql(pm.variables.get(\"teamDatabase\")));",
+                  "pm.test(\"severity is SEV2\", () => pm.expect(pm.response.json().severity).to.eql(\"SEV2\"));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Reporter: my incidents",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-User-Id",
+                "value": "{{reporter}}",
+                "description": "Acting user"
+              }
+            ],
+            "url": "{{incidentUrl}}/users/{{reporter}}/incidents",
+            "description": "The reporter follows their own incidents, newest first."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"includes the new incident\", () => pm.expect(pm.response.json().map(i => i.id)).to.include(pm.collectionVariables.get(\"flowAIncident\")));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Reporter: add details to the description",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "X-User-Id",
+                "value": "{{reporter}}",
+                "description": "Acting user"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{$guid}}",
+                "description": "A new key per request; repeat it to retry safely"
+              }
+            ],
+            "url": "{{incidentUrl}}/incidents/{{flowAIncident}}",
+            "description": "Title and description may be changed by the reporter or the owning team; no emails.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"description\": \"Pages take 10 s to load; started after the 9:00 deploy\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"description updated\", () => pm.expect(pm.response.json().description).to.eql(\"Pages take 10 s to load; started after the 9:00 deploy\"));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Reporter: may not change the status",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "X-User-Id",
+                "value": "{{reporter}}",
+                "description": "Acting user"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{$guid}}",
+                "description": "A new key per request; repeat it to retry safely"
+              }
+            ],
+            "url": "{{incidentUrl}}/incidents/{{flowAIncident}}",
+            "description": "Status, severity and hand-over are for the owning team only.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"status\": \"IN_PROGRESS\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status 403\", () => pm.response.to.have.status(403));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Assignee: my team's queue",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-User-Id",
+                "value": "{{assignee}}",
+                "description": "Acting user"
+              }
+            ],
+            "url": "{{incidentUrl}}/teams/{{teamDatabase}}/incidents",
+            "description": "Dan sees the incidents his team owns."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"the new incident is OPEN in the queue\", () => pm.expect(pm.response.json().find(i => i.id === pm.collectionVariables.get(\"flowAIncident\")).status).to.eql(\"OPEN\"));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Assignee: acknowledge",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "X-User-Id",
+                "value": "{{assignee}}",
+                "description": "Acting user"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{$guid}}",
+                "description": "A new key per request; repeat it to retry safely"
+              }
+            ],
+            "url": "{{incidentUrl}}/incidents/{{flowAIncident}}",
+            "description": "OPEN → IN_PROGRESS. The reporter is told someone is working on it.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"status\": \"IN_PROGRESS\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"status is IN_PROGRESS\", () => pm.expect(pm.response.json().status).to.eql(\"IN_PROGRESS\"));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Assignee: comment",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-User-Id",
+                "value": "{{assignee}}",
+                "description": "Acting user"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{$guid}}",
+                "description": "A new key per request; repeat it to retry safely"
+              }
+            ],
+            "url": "{{incidentUrl}}/incidents/{{flowAIncident}}/comments",
+            "description": "Owning team or reporter, while the incident is active.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"text\": \"Looking at the slow queries on the primary\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status 201\", () => pm.response.to.have.status(201));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Reporter: reply",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-User-Id",
+                "value": "{{reporter}}",
+                "description": "Acting user"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{$guid}}",
+                "description": "A new key per request; repeat it to retry safely"
+              }
+            ],
+            "url": "{{incidentUrl}}/incidents/{{flowAIncident}}/comments",
+            "description": "The reporter can comment on their own incident.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"text\": \"Also affects the mobile app\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status 201\", () => pm.response.to.have.status(201));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Reporter: view the incident with comments",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-User-Id",
+                "value": "{{reporter}}",
+                "description": "Acting user"
+              }
+            ],
+            "url": "{{incidentUrl}}/incidents/{{flowAIncident}}",
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"both comments, oldest first\", () => pm.expect(pm.response.json().comments.map(c => c.text)).to.eql([\"Looking at the slow queries on the primary\", \"Also affects the mobile app\"]));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Assignee: submit for review",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "X-User-Id",
+                "value": "{{assignee}}",
+                "description": "Acting user"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{$guid}}",
+                "description": "A new key per request; repeat it to retry safely"
+              }
+            ],
+            "url": "{{incidentUrl}}/incidents/{{flowAIncident}}",
+            "description": "IN_PROGRESS → IN_REVIEW; no emails.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"status\": \"IN_REVIEW\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"status is IN_REVIEW\", () => pm.expect(pm.response.json().status).to.eql(\"IN_REVIEW\"));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Assignee: may not resolve without a reason",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "X-User-Id",
+                "value": "{{assignee}}",
+                "description": "Acting user"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{$guid}}",
+                "description": "A new key per request; repeat it to retry safely"
+              }
+            ],
+            "url": "{{incidentUrl}}/incidents/{{flowAIncident}}",
+            "description": "Resolving, cancelling and reopening need a reason.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"status\": \"RESOLVED\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status 400\", () => pm.response.to.have.status(400));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Team lead: resolve",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "X-User-Id",
+                "value": "{{teamLead}}",
+                "description": "Acting user"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{$guid}}",
+                "description": "A new key per request; repeat it to retry safely"
+              }
+            ],
+            "url": "{{incidentUrl}}/incidents/{{flowAIncident}}",
+            "description": "IN_REVIEW → RESOLVED. The team and the reporter are emailed, with the resolution.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"status\": \"RESOLVED\",\n  \"reason\": \"Missing index rebuilt\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"status is RESOLVED\", () => pm.expect(pm.response.json().status).to.eql(\"RESOLVED\"));",
+                  "pm.test(\"resolutionNote is Missing index rebuilt\", () => pm.expect(pm.response.json().resolutionNote).to.eql(\"Missing index rebuilt\"));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Assignee: close",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "X-User-Id",
+                "value": "{{assignee}}",
+                "description": "Acting user"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{$guid}}",
+                "description": "A new key per request; repeat it to retry safely"
+              }
+            ],
+            "url": "{{incidentUrl}}/incidents/{{flowAIncident}}",
+            "description": "RESOLVED → CLOSED, final; no emails.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"status\": \"CLOSED\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"status is CLOSED\", () => pm.expect(pm.response.json().status).to.eql(\"CLOSED\"));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Reporter: may not comment on a closed incident",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-User-Id",
+                "value": "{{reporter}}",
+                "description": "Acting user"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{$guid}}",
+                "description": "A new key per request; repeat it to retry safely"
+              }
+            ],
+            "url": "{{incidentUrl}}/incidents/{{flowAIncident}}/comments",
+            "description": "Only OPEN, IN_PROGRESS and IN_REVIEW incidents take comments.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"text\": \"One more thing\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status 409\", () => pm.response.to.have.status(409));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Emails of flow A",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{mailpitUrl}}/api/v1/search?query={{flowAIncident}}",
+            "description": "Team: new incident and resolved. Reporter: being worked on, and resolved. Review, comments and closing send nothing."
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "setTimeout(() => {}, Number(pm.variables.get(\"emailDelayMs\")));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status 200\", () => pm.response.to.have.status(200));",
+                  "const got = pm.response.json().messages.map(m => m.To[0].Address + \" | \" + m.Subject.split(\":\")[0]).sort();",
+                  "const expected = [\"alice@example.com | [SEV2] New incident\", \"dan@example.com | [SEV2] New incident\", \"bob@example.com | [SEV2] Your incident is being worked on\", \"alice@example.com | [SEV2] Resolved\", \"dan@example.com | [SEV2] Resolved\", \"bob@example.com | [SEV2] Resolved\"].sort();",
+                  "pm.test(\"exactly these emails, each once\", () => pm.expect(got).to.eql(expected));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "History of flow A",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-User-Id",
+                "value": "{{reporter}}",
+                "description": "Acting user"
+              }
+            ],
+            "url": "{{auditUrl}}/incidents/{{flowAIncident}}/history",
+            "description": "Everything both sides did, oldest first."
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "setTimeout(() => {}, Number(pm.variables.get(\"historyDelayMs\")));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status 200\", () => pm.response.to.have.status(200));",
+                  "const h = pm.response.json();",
+                  "pm.test(\"one entry per change, in order\", () => pm.expect(h.map(e => e.action)).to.eql([\"INCIDENT_CREATED\", \"DETAILS_UPDATED\", \"STATUS_CHANGED\", \"COMMENT_ADDED\", \"COMMENT_ADDED\", \"STATUS_CHANGED\", \"STATUS_CHANGED\", \"STATUS_CHANGED\"]));",
+                  "pm.test(\"resolution recorded\", () => pm.expect(h[6].details).to.include({from: \"IN_REVIEW\", to: \"RESOLVED\", note: \"Missing index rebuilt\"}));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "B. Escalation with hand-over to another team",
+      "description": "Dan (Database) finds the cause is in payments: he escalates to SEV1 and hands the incident over to Platform. Carol (Platform) becomes the assignee, de-escalates once it is contained, and closes it.",
+      "item": [
+        {
+          "name": "Reporter: report the incident",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-User-Id",
+                "value": "{{reporter}}",
+                "description": "Acting user"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{$guid}}",
+                "description": "A new key per request; repeat it to retry safely"
+              }
+            ],
+            "url": "{{incidentUrl}}/incidents",
+            "description": "Any active user may report. The category decides the owning team, whose members are emailed. A reporter may set at most SEV2.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"title\": \"Payments time out\",\n  \"description\": \"Checkout fails after 30 s\",\n  \"categoryId\": \"{{categoryDatabase}}\",\n  \"severity\": \"SEV2\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status 201\", () => pm.response.to.have.status(201));",
+                  "pm.collectionVariables.set(\"flowBIncident\", pm.response.json().id);",
+                  "pm.test(\"status is OPEN\", () => pm.expect(pm.response.json().status).to.eql(\"OPEN\"));",
+                  "pm.test(\"teamId is {{teamDatabase}}\", () => pm.expect(pm.response.json().teamId).to.eql(pm.variables.get(\"teamDatabase\")));",
+                  "pm.test(\"severity is SEV2\", () => pm.expect(pm.response.json().severity).to.eql(\"SEV2\"));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Assignee: acknowledge",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "X-User-Id",
+                "value": "{{assignee}}",
+                "description": "Acting user"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{$guid}}",
+                "description": "A new key per request; repeat it to retry safely"
+              }
+            ],
+            "url": "{{incidentUrl}}/incidents/{{flowBIncident}}",
+            "description": "Dan starts working on it.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"status\": \"IN_PROGRESS\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"status is IN_PROGRESS\", () => pm.expect(pm.response.json().status).to.eql(\"IN_PROGRESS\"));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Assignee: escalation needs a reason",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "X-User-Id",
+                "value": "{{assignee}}",
+                "description": "Acting user"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{$guid}}",
+                "description": "A new key per request; repeat it to retry safely"
+              }
+            ],
+            "url": "{{incidentUrl}}/incidents/{{flowBIncident}}",
+            "description": "Every severity change needs a reason.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"severity\": \"SEV1\",\n  \"targetTeamId\": \"{{teamPlatform}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status 400\", () => pm.response.to.have.status(400));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Assignee: may not hand over to an unknown team",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "X-User-Id",
+                "value": "{{assignee}}",
+                "description": "Acting user"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{$guid}}",
+                "description": "A new key per request; repeat it to retry safely"
+              }
+            ],
+            "url": "{{incidentUrl}}/incidents/{{flowBIncident}}",
+            "description": "The target team must exist and not be archived.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"severity\": \"SEV1\",\n  \"targetTeamId\": \"10000000-0000-0000-0000-000000000999\",\n  \"reason\": \"x\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status 409\", () => pm.response.to.have.status(409));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Assignee: escalate to SEV1 and hand over to Platform",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "X-User-Id",
+                "value": "{{assignee}}",
+                "description": "Acting user"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{$guid}}",
+                "description": "A new key per request; repeat it to retry safely"
+              }
+            ],
+            "url": "{{incidentUrl}}/incidents/{{flowBIncident}}",
+            "description": "Severity up and hand-over in one atomic change. The new team gets it OPEN; the new team, the previous team and the reporter each get their own email; Dan, who escalated, gets none.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"severity\": \"SEV1\",\n  \"targetTeamId\": \"{{teamPlatform}}\",\n  \"reason\": \"Connection pool of the payments service is exhausted\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"severity is SEV1\", () => pm.expect(pm.response.json().severity).to.eql(\"SEV1\"));",
+                  "pm.test(\"teamId is {{teamPlatform}}\", () => pm.expect(pm.response.json().teamId).to.eql(pm.variables.get(\"teamPlatform\")));",
+                  "pm.test(\"OPEN again for the new team\", () => pm.expect(pm.response.json().status).to.eql(\"OPEN\"));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Previous assignee: may no longer change it",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "X-User-Id",
+                "value": "{{assignee}}",
+                "description": "Acting user"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{$guid}}",
+                "description": "A new key per request; repeat it to retry safely"
+              }
+            ],
+            "url": "{{incidentUrl}}/incidents/{{flowBIncident}}",
+            "description": "Dan's team does not own it any more.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"status\": \"IN_PROGRESS\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status 403\", () => pm.response.to.have.status(403));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "New assignee: Platform's queue",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-User-Id",
+                "value": "{{platformAssignee}}",
+                "description": "Acting user"
+              }
+            ],
+            "url": "{{incidentUrl}}/teams/{{teamPlatform}}/incidents",
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"the incident is in Platform's queue\", () => pm.expect(pm.response.json().map(i => i.id)).to.include(pm.collectionVariables.get(\"flowBIncident\")));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "New assignee: acknowledge",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "X-User-Id",
+                "value": "{{platformAssignee}}",
+                "description": "Acting user"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{$guid}}",
+                "description": "A new key per request; repeat it to retry safely"
+              }
+            ],
+            "url": "{{incidentUrl}}/incidents/{{flowBIncident}}",
+            "description": "Carol takes it over; the reporter is told again.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"status\": \"IN_PROGRESS\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"status is IN_PROGRESS\", () => pm.expect(pm.response.json().status).to.eql(\"IN_PROGRESS\"));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "New assignee: may not de-escalate and hand over",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "X-User-Id",
+                "value": "{{platformAssignee}}",
+                "description": "Acting user"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{$guid}}",
+                "description": "A new key per request; repeat it to retry safely"
+              }
+            ],
+            "url": "{{incidentUrl}}/incidents/{{flowBIncident}}",
+            "description": "Only an escalation can hand over.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"severity\": \"SEV2\",\n  \"targetTeamId\": \"{{teamDatabase}}\",\n  \"reason\": \"back\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status 409\", () => pm.response.to.have.status(409));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "New assignee: de-escalate to SEV2",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "X-User-Id",
+                "value": "{{platformAssignee}}",
+                "description": "Acting user"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{$guid}}",
+                "description": "A new key per request; repeat it to retry safely"
+              }
+            ],
+            "url": "{{incidentUrl}}/incidents/{{flowBIncident}}",
+            "description": "Severity down, same team. Carol is the only Platform member and the actor, so only the reporter is emailed.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"severity\": \"SEV2\",\n  \"reason\": \"Pool resized, errors gone\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"severity is SEV2\", () => pm.expect(pm.response.json().severity).to.eql(\"SEV2\"));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "New assignee: submit for review",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "X-User-Id",
+                "value": "{{platformAssignee}}",
+                "description": "Acting user"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{$guid}}",
+                "description": "A new key per request; repeat it to retry safely"
+              }
+            ],
+            "url": "{{incidentUrl}}/incidents/{{flowBIncident}}",
+            "description": "IN_PROGRESS → IN_REVIEW.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"status\": \"IN_REVIEW\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status 200\", () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "New assignee: resolve",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "X-User-Id",
+                "value": "{{platformAssignee}}",
+                "description": "Acting user"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{$guid}}",
+                "description": "A new key per request; repeat it to retry safely"
+              }
+            ],
+            "url": "{{incidentUrl}}/incidents/{{flowBIncident}}",
+            "description": "Team and reporter are emailed.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"status\": \"RESOLVED\",\n  \"reason\": \"Pool size raised to 50\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status 200\", () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "New assignee: close",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "X-User-Id",
+                "value": "{{platformAssignee}}",
+                "description": "Acting user"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{$guid}}",
+                "description": "A new key per request; repeat it to retry safely"
+              }
+            ],
+            "url": "{{incidentUrl}}/incidents/{{flowBIncident}}",
+            "description": "Final.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"status\": \"CLOSED\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status 200\", () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Emails of flow B",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{mailpitUrl}}/api/v1/search?query={{flowBIncident}}",
+            "description": "The escalation emails come from escalation-service; Dan, who escalated, and Carol, who de-escalated, are not emailed about their own change."
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "setTimeout(() => {}, Number(pm.variables.get(\"emailDelayMs\")));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status 200\", () => pm.response.to.have.status(200));",
+                  "const got = pm.response.json().messages.map(m => m.To[0].Address + \" | \" + m.Subject.split(\":\")[0]).sort();",
+                  "const expected = [\"alice@example.com | [SEV2] New incident\", \"dan@example.com | [SEV2] New incident\", \"bob@example.com | [SEV2] Your incident is being worked on\", \"carol@example.com | [SEV1] Escalated to you\", \"alice@example.com | [SEV1] Handed over to Platform\", \"bob@example.com | [SEV1] Your incident was escalated\", \"bob@example.com | [SEV1] Your incident is being worked on\", \"bob@example.com | [SEV2] Your incident was de-escalated\", \"carol@example.com | [SEV2] Resolved\", \"bob@example.com | [SEV2] Resolved\"].sort();",
+                  "pm.test(\"exactly these emails, each once\", () => pm.expect(got).to.eql(expected));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "History of flow B",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-User-Id",
+                "value": "{{reporter}}",
+                "description": "Acting user"
+              }
+            ],
+            "url": "{{auditUrl}}/incidents/{{flowBIncident}}/history",
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "setTimeout(() => {}, Number(pm.variables.get(\"historyDelayMs\")));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status 200\", () => pm.response.to.have.status(200));",
+                  "const h = pm.response.json();",
+                  "pm.test(\"one entry per change, in order\", () => pm.expect(h.map(e => e.action)).to.eql([\"INCIDENT_CREATED\", \"STATUS_CHANGED\", \"ESCALATED\", \"STATUS_CHANGED\", \"DE_ESCALATED\", \"STATUS_CHANGED\", \"STATUS_CHANGED\", \"STATUS_CHANGED\"]));",
+                  "pm.test(\"hand-over recorded\", () => pm.expect(h[2].details).to.include({fromSeverity: \"SEV2\", toSeverity: \"SEV1\", fromTeam: pm.variables.get(\"teamDatabase\"), toTeam: pm.variables.get(\"teamPlatform\")}));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "C. Resolved, then reopened",
+      "description": "Bob reports a VPN problem; the Network team (Erin, Alice) owns it. Erin resolves it, it comes back, she reopens and resolves it again.",
+      "item": [
+        {
+          "name": "Reporter: report the incident",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-User-Id",
+                "value": "{{reporter}}",
+                "description": "Acting user"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{$guid}}",
+                "description": "A new key per request; repeat it to retry safely"
+              }
+            ],
+            "url": "{{incidentUrl}}/incidents",
+            "description": "Any active user may report. The category decides the owning team, whose members are emailed. A reporter may set at most SEV2.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"title\": \"VPN drops every hour\",\n  \"description\": \"Connection is lost every 60 minutes\",\n  \"categoryId\": \"{{categoryVpn}}\",\n  \"severity\": \"SEV2\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status 201\", () => pm.response.to.have.status(201));",
+                  "pm.collectionVariables.set(\"flowCIncident\", pm.response.json().id);",
+                  "pm.test(\"status is OPEN\", () => pm.expect(pm.response.json().status).to.eql(\"OPEN\"));",
+                  "pm.test(\"teamId is {{teamNetwork}}\", () => pm.expect(pm.response.json().teamId).to.eql(pm.variables.get(\"teamNetwork\")));",
+                  "pm.test(\"severity is SEV2\", () => pm.expect(pm.response.json().severity).to.eql(\"SEV2\"));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Assignee: acknowledge",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "X-User-Id",
+                "value": "{{networkAssignee}}",
+                "description": "Acting user"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{$guid}}",
+                "description": "A new key per request; repeat it to retry safely"
+              }
+            ],
+            "url": "{{incidentUrl}}/incidents/{{flowCIncident}}",
+            "description": "Erin starts working on it.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"status\": \"IN_PROGRESS\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status 200\", () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Assignee: may not resolve before review",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "X-User-Id",
+                "value": "{{networkAssignee}}",
+                "description": "Acting user"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{$guid}}",
+                "description": "A new key per request; repeat it to retry safely"
+              }
+            ],
+            "url": "{{incidentUrl}}/incidents/{{flowCIncident}}",
+            "description": "Only a reviewed incident can be resolved.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"status\": \"RESOLVED\",\n  \"reason\": \"x\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status 409\", () => pm.response.to.have.status(409));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Assignee: review",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "X-User-Id",
+                "value": "{{networkAssignee}}",
+                "description": "Acting user"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{$guid}}",
+                "description": "A new key per request; repeat it to retry safely"
+              }
+            ],
+            "url": "{{incidentUrl}}/incidents/{{flowCIncident}}",
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"status\": \"IN_REVIEW\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status 200\", () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Assignee: resolve",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "X-User-Id",
+                "value": "{{networkAssignee}}",
+                "description": "Acting user"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{$guid}}",
+                "description": "A new key per request; repeat it to retry safely"
+              }
+            ],
+            "url": "{{incidentUrl}}/incidents/{{flowCIncident}}",
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"status\": \"RESOLVED\",\n  \"reason\": \"Gateway firmware updated\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status 200\", () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Reporter: may not comment on a resolved incident",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-User-Id",
+                "value": "{{reporter}}",
+                "description": "Acting user"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{$guid}}",
+                "description": "A new key per request; repeat it to retry safely"
+              }
+            ],
+            "url": "{{incidentUrl}}/incidents/{{flowCIncident}}/comments",
+            "description": "Resolved incidents take no comments; the team reopens.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"text\": \"It is back\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status 409\", () => pm.response.to.have.status(409));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Assignee: reopen needs a reason",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "X-User-Id",
+                "value": "{{networkAssignee}}",
+                "description": "Acting user"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{$guid}}",
+                "description": "A new key per request; repeat it to retry safely"
+              }
+            ],
+            "url": "{{incidentUrl}}/incidents/{{flowCIncident}}",
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"status\": \"IN_PROGRESS\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status 400\", () => pm.response.to.have.status(400));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Assignee: reopen",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "X-User-Id",
+                "value": "{{networkAssignee}}",
+                "description": "Acting user"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{$guid}}",
+                "description": "A new key per request; repeat it to retry safely"
+              }
+            ],
+            "url": "{{incidentUrl}}/incidents/{{flowCIncident}}",
+            "description": "RESOLVED → IN_PROGRESS; the resolution is cleared. Team and reporter are emailed.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"status\": \"IN_PROGRESS\",\n  \"reason\": \"Drops are back since 14:00\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"status is IN_PROGRESS\", () => pm.expect(pm.response.json().status).to.eql(\"IN_PROGRESS\"));",
+                  "pm.test(\"resolution cleared\", () => pm.expect(pm.response.json().resolutionNote).to.eql(null));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Assignee: review again",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "X-User-Id",
+                "value": "{{networkAssignee}}",
+                "description": "Acting user"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{$guid}}",
+                "description": "A new key per request; repeat it to retry safely"
+              }
+            ],
+            "url": "{{incidentUrl}}/incidents/{{flowCIncident}}",
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"status\": \"IN_REVIEW\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status 200\", () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Assignee: resolve again",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "X-User-Id",
+                "value": "{{networkAssignee}}",
+                "description": "Acting user"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{$guid}}",
+                "description": "A new key per request; repeat it to retry safely"
+              }
+            ],
+            "url": "{{incidentUrl}}/incidents/{{flowCIncident}}",
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"status\": \"RESOLVED\",\n  \"reason\": \"Second gateway updated too\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status 200\", () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Emails of flow C",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{mailpitUrl}}/api/v1/search?query={{flowCIncident}}",
+            "description": "The reopen goes to the team and the reporter, with the reason."
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "setTimeout(() => {}, Number(pm.variables.get(\"emailDelayMs\")));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status 200\", () => pm.response.to.have.status(200));",
+                  "const got = pm.response.json().messages.map(m => m.To[0].Address + \" | \" + m.Subject.split(\":\")[0]).sort();",
+                  "const expected = [\"erin@example.com | [SEV2] New incident\", \"alice@example.com | [SEV2] New incident\", \"bob@example.com | [SEV2] Your incident is being worked on\", \"erin@example.com | [SEV2] Resolved\", \"alice@example.com | [SEV2] Resolved\", \"bob@example.com | [SEV2] Resolved\", \"erin@example.com | [SEV2] Reopened\", \"alice@example.com | [SEV2] Reopened\", \"bob@example.com | [SEV2] Reopened\", \"erin@example.com | [SEV2] Resolved\", \"alice@example.com | [SEV2] Resolved\", \"bob@example.com | [SEV2] Resolved\"].sort();",
+                  "pm.test(\"exactly these emails, each once\", () => pm.expect(got).to.eql(expected));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "History of flow C",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-User-Id",
+                "value": "{{reporter}}",
+                "description": "Acting user"
+              }
+            ],
+            "url": "{{auditUrl}}/incidents/{{flowCIncident}}/history",
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "setTimeout(() => {}, Number(pm.variables.get(\"historyDelayMs\")));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status 200\", () => pm.response.to.have.status(200));",
+                  "const h = pm.response.json();",
+                  "pm.test(\"one entry per change, in order\", () => pm.expect(h.map(e => e.action)).to.eql([\"INCIDENT_CREATED\", \"STATUS_CHANGED\", \"STATUS_CHANGED\", \"STATUS_CHANGED\", \"STATUS_CHANGED\", \"STATUS_CHANGED\", \"STATUS_CHANGED\"]));",
+                  "pm.test(\"reopen recorded with its reason\", () => pm.expect(h[4].details).to.include({from: \"RESOLVED\", to: \"IN_PROGRESS\", note: \"Drops are back since 14:00\"}));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "D. Cancel a duplicate",
+      "description": "Bob reports something the Database team already works on; Dan cancels it as a duplicate.",
+      "item": [
+        {
+          "name": "Reporter: report the incident",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-User-Id",
+                "value": "{{reporter}}",
+                "description": "Acting user"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{$guid}}",
+                "description": "A new key per request; repeat it to retry safely"
+              }
+            ],
+            "url": "{{incidentUrl}}/incidents",
+            "description": "Any active user may report. The category decides the owning team, whose members are emailed. A reporter may set at most SEV2.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"title\": \"Checkout slow again\",\n  \"description\": \"\",\n  \"categoryId\": \"{{categoryDatabase}}\",\n  \"severity\": \"SEV2\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status 201\", () => pm.response.to.have.status(201));",
+                  "pm.collectionVariables.set(\"flowDIncident\", pm.response.json().id);",
+                  "pm.test(\"status is OPEN\", () => pm.expect(pm.response.json().status).to.eql(\"OPEN\"));",
+                  "pm.test(\"teamId is {{teamDatabase}}\", () => pm.expect(pm.response.json().teamId).to.eql(pm.variables.get(\"teamDatabase\")));",
+                  "pm.test(\"severity is SEV2\", () => pm.expect(pm.response.json().severity).to.eql(\"SEV2\"));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Assignee: cancel needs a reason",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "X-User-Id",
+                "value": "{{assignee}}",
+                "description": "Acting user"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{$guid}}",
+                "description": "A new key per request; repeat it to retry safely"
+              }
+            ],
+            "url": "{{incidentUrl}}/incidents/{{flowDIncident}}",
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"status\": \"CANCELLED\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status 400\", () => pm.response.to.have.status(400));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Assignee: cancel as duplicate",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "X-User-Id",
+                "value": "{{assignee}}",
+                "description": "Acting user"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{$guid}}",
+                "description": "A new key per request; repeat it to retry safely"
+              }
+            ],
+            "url": "{{incidentUrl}}/incidents/{{flowDIncident}}",
+            "description": "Final; team and reporter are emailed with the reason.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"status\": \"CANCELLED\",\n  \"reason\": \"Duplicate of the open checkout incident\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"status is CANCELLED\", () => pm.expect(pm.response.json().status).to.eql(\"CANCELLED\"));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Assignee: may not escalate a cancelled incident",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "X-User-Id",
+                "value": "{{assignee}}",
+                "description": "Acting user"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{$guid}}",
+                "description": "A new key per request; repeat it to retry safely"
+              }
+            ],
+            "url": "{{incidentUrl}}/incidents/{{flowDIncident}}",
+            "description": "Cancelled is final.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"severity\": \"SEV1\",\n  \"reason\": \"x\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status 409\", () => pm.response.to.have.status(409));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Reporter: may not rename a cancelled incident",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "X-User-Id",
+                "value": "{{reporter}}",
+                "description": "Acting user"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{$guid}}",
+                "description": "A new key per request; repeat it to retry safely"
+              }
+            ],
+            "url": "{{incidentUrl}}/incidents/{{flowDIncident}}",
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"title\": \"Renamed\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status 409\", () => pm.response.to.have.status(409));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Emails of flow D",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{mailpitUrl}}/api/v1/search?query={{flowDIncident}}",
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "setTimeout(() => {}, Number(pm.variables.get(\"emailDelayMs\")));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status 200\", () => pm.response.to.have.status(200));",
+                  "const got = pm.response.json().messages.map(m => m.To[0].Address + \" | \" + m.Subject.split(\":\")[0]).sort();",
+                  "const expected = [\"alice@example.com | [SEV2] New incident\", \"dan@example.com | [SEV2] New incident\", \"alice@example.com | [SEV2] Cancelled\", \"dan@example.com | [SEV2] Cancelled\", \"bob@example.com | [SEV2] Cancelled\"].sort();",
+                  "pm.test(\"exactly these emails, each once\", () => pm.expect(got).to.eql(expected));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "History of flow D",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-User-Id",
+                "value": "{{reporter}}",
+                "description": "Acting user"
+              }
+            ],
+            "url": "{{auditUrl}}/incidents/{{flowDIncident}}/history",
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "setTimeout(() => {}, Number(pm.variables.get(\"historyDelayMs\")));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status 200\", () => pm.response.to.have.status(200));",
+                  "const h = pm.response.json();",
+                  "pm.test(\"one entry per change, in order\", () => pm.expect(h.map(e => e.action)).to.eql([\"INCIDENT_CREATED\", \"STATUS_CHANGED\"]));",
+                  "pm.test(\"cancel recorded with its reason\", () => pm.expect(h[1].details).to.include({to: \"CANCELLED\", note: \"Duplicate of the open checkout incident\"}));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
