@@ -3,6 +3,7 @@
 - **Status:** Proposed
 - **Date:** 2026-11-20
 - **Deciders:** project owner (pet project, single developer)
+- **Diagrams:** [0002-add-mcp-server-diagrams.md](0002-add-mcp-server-diagrams.md)
 - **Related:** [ADR-0001](0001-migrate-to-microservices.md): D1 (services and entry points), D7 (nothing shared),
   D9 (idempotency keys), D13 (no gateway), §6 (real authentication is a follow-up)
 - **Sources:** [Model Context Protocol specification](https://modelcontextprotocol.io/specification),
