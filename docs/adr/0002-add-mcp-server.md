@@ -106,17 +106,6 @@ MCP client ──stdio──▶ mcp-server ──HTTP, X-User-Id: <configured us
 **Rule of thumb:** if every client (a web UI, Postman, the MCP server) would need a behaviour, it belongs in a
 service. If it exists only to make an assistant effective, it belongs in the MCP server.
 
-### D3. Technology and transport
-
-- **Spring Boot 3.5.6 + Spring AI 1.1.x** (`spring-ai-starter-mcp-server`). Spring AI 1.1 is the line for Boot
-  3.5; 2.x needs Boot 4. Tools are `@Tool` methods; `RestClient` calls the services.
-- **stdio transport:** the client starts the server as a local process (`mcp-server/run.sh`), one process per
-  user. No port, no hosting.
-- **stdout carries only the MCP protocol:** no banner, no web server, and logs go to a file
-  (`logback-spring.xml`, `INCIDENT_MCP_LOG_FILE`).
-- Configuration by environment: `INCIDENT_MCP_USER`, `INCIDENT_URL`, `ORGANIZATION_URL`, `AUDIT_URL`,
-  `INCIDENT_MCP_TIMEOUT`. A project `.mcp.json` registers it for Claude Code in the repository root.
-
 ### D4. Identity: who the assistant acts as
 
 - Each server process acts as **one user**, `INCIDENT_MCP_USER` (username or id), sent as `X-User-Id` on every
@@ -168,35 +157,6 @@ invalid moves. They all send `PATCH /incidents/{id}`; the service still checks e
   model's context.
 - **Revisit** when the data grows past a few hundred incidents, or when a UI needs the same numbers. Then add query
   parameters and a stats endpoint to incident-service (§6), and the MCP tools call those instead.
-
-### D8. Errors and safety
-
-- An RFC 9457 problem from a service becomes a **tool error** that names the service, the request and the
-  `detail`, e.g. `409 from incident-service (PATCH /incidents/…): Incident … cannot go from OPEN to RESOLVED`. For
-  401 and 403 it adds who the acting user is. An unreachable service gives "not reachable, is the stack running?".
-- Every write sends a fresh **`Idempotency-Key`** (ADR-0001 D9).
-- Tools carry MCP **annotations**: `readOnlyHint` on reads, `destructiveHint` on `cancel`, `close` and
-  hand-overs, so clients can ask the user to confirm.
-- The server never retries a write on its own.
-
-### D9. Service changes this needs
-
-| Change | Service | Why |
-|---|---|---|
-| `GET /categories`: active categories (id, name, owning team) | organization-service | The model must pick a `categoryId` to report an incident. Today the five demo ids are written into the tool description |
-| `GET /me`: id, username, name, system role, teams with team roles | organization-service | Identity at start-up (D4) without `/internal/**`. `/teams` has no usernames and no system role |
-
-Both are read-only, are useful to every client, and follow the existing web code (caller check, problem
-details, OpenAPI). Until they exist, the prototype uses the demo category ids and does not choose tools by role.
-
-### D10. Testing
-
-- Unit tests with `MockRestServiceServer`: each tool calls the right endpoint with `X-User-Id`; PATCH bodies hold
-  only the given fields; problem details become tool errors; role → tool set.
-- A context test: every tool is registered with a description and an input schema.
-- A stdio smoke test against the Compose stack (`initialize`, `tools/list`, one `tools/call`), as in
-  `mcp-server/README.md`.
-- The Postman collections are unchanged: the MCP server adds no endpoints to the services.
 
 ## 5. Consequences
 
